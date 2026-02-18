@@ -52,22 +52,38 @@ def main():
     print(f"Using model : {MODEL_NAME}")
     print(f"Ollama URL  : {OLLAMA_BASE_URL}\n")
 
-    tasks = []
+    tasks = pd.DataFrame()
     if os.path.exists("data/tasks.csv"):
-        tasks = pd.read_csv("data/tasks.csv").to_dict(orient="records")
-        for task in tasks:
-            if isinstance(task["dependencies"], str) and task["dependencies"]:
-                task["dependencies"] = json.loads(task["dependencies"])
-            else:
-                task["dependencies"] = []
-            if "status" not in task or pd.isna(task.get("status")):
-                task["status"] = "pending"
-            if "priority" not in task or pd.isna(task.get("priority")):
-                task["priority"] = "medium"
-            if "started_at" not in task or pd.isna(task.get("started_at")):
-                task["started_at"] = None
-            if "ended_at" not in task or pd.isna(task.get("ended_at")):
-                task["ended_at"] = None
+        tasks = pd.read_csv("data/tasks.csv")
+        
+        # Ensure dependencies are list objects
+        if "dependencies" in tasks.columns:
+            def ensure_list(x):
+                if isinstance(x, str):
+                    try:
+                        return json.loads(x)
+                    except:
+                        return []
+                return x if isinstance(x, list) else []
+            tasks["dependencies"] = tasks["dependencies"].apply(ensure_list)
+        else:
+            tasks["dependencies"] = [[] for _ in range(len(tasks))]
+
+        # Fill missing values and ensure columns exist
+        cols_to_fill = {
+            "status": "pending",
+            "priority": "medium",
+            "date": "9999-12-31",
+            "time": "23:59"
+        }
+        for col, val in cols_to_fill.items():
+            if col not in tasks.columns:
+                tasks[col] = val
+            tasks[col] = tasks[col].fillna(val)
+        
+        if "started_at" not in tasks.columns: tasks["started_at"] = None
+        if "ended_at" not in tasks.columns: tasks["ended_at"] = None
+
         print(f"Loaded {len(tasks)} existing tasks from data/tasks.csv")
     else:
         print("No existing tasks found. Starting fresh.")
@@ -98,10 +114,11 @@ def main():
         print(f"An error occurred: {e}")
         traceback.print_exc()
     finally:
-        if tasks:
-            df = pd.DataFrame(tasks)
-            df["dependencies"] = df["dependencies"].apply(json.dumps)
-            df.to_csv("data/tasks.csv", index=False)
+        if isinstance(tasks, pd.DataFrame) and not tasks.empty:
+            df_to_save = tasks.copy()
+            # Convert list dependencies back to JSON strings for CSV
+            df_to_save["dependencies"] = df_to_save["dependencies"].apply(json.dumps)
+            df_to_save.to_csv("data/tasks.csv", index=False)
             print("Tasks saved to data/tasks.csv")
         else:
             # remove the file if there are no tasks to save

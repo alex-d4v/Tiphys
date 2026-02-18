@@ -1,5 +1,6 @@
 from typing import TypedDict, List, Literal, Annotated
 import operator
+import pandas as pd
 from langgraph.graph import StateGraph, END
 
 # SIMPLE HARDCODED FUNCTIONS TO HANDLE TASKS AND INTERACTIONS , THE REAL LOGIC IS IN THE PROMPTS AND THE LLM RESPONSES
@@ -19,7 +20,7 @@ from utils.print_utils import print_tasks_table , print_update_message
 
 # TypedDict for the state
 class TaskManagerState(TypedDict):
-    tasks: List[dict]
+    tasks: pd.DataFrame
     current_action: str
     exit_requested: bool
     prev_message : str | None
@@ -28,7 +29,9 @@ class TaskManagerState(TypedDict):
 
 def initial_node(state: TaskManagerState , run_llm_func) -> TaskManagerState:
     # we just invoke the llm to get a welcome message or initial tasks if needed
-    tasks = state.get("tasks", [])
+    tasks = state.get("tasks")
+    if tasks is None: tasks = pd.DataFrame()
+
     prompt = create_welcome_prompt(
         user_name="Alex Ntavlouros",
         tasks=tasks
@@ -43,7 +46,7 @@ def initial_node(state: TaskManagerState , run_llm_func) -> TaskManagerState:
     return state
 
 def list_tasks_node(state: TaskManagerState) -> TaskManagerState:
-    if state["tasks"]:
+    if not state["tasks"].empty:
         print_tasks_table(state["tasks"])
     else:
         print("No tasks found.")
@@ -113,30 +116,33 @@ def generate_tasks_node(state: TaskManagerState, run_llm_func):
     
     print("="*50)
     print(f"\n\nAdding {len(temp_tasks)} tasks\n\n")
+    print_update_message(pd.DataFrame(temp_tasks))# print the new tasks in a nice format for the user to see what was added
     print("="*50)
     
+    # Convert to DF for print utility
+    new_tasks_df = pd.DataFrame(temp_tasks)
     user_corpus = f"""
         User : I have just added some tasks with the follwing description :
-        {print_update_message(temp_tasks, verbose=False)}
+        {print_update_message(new_tasks_df, verbose=False)}
     """
     general_message = run_llm_func(prompt=user_corpus, 
                                    system_prompt=create_general_message_prompt())
 
     print(f"\n\n{general_message}\n\n")
 
-    return {"tasks": state["tasks"] + temp_tasks}
+    return {"tasks": pd.concat([state["tasks"], new_tasks_df], ignore_index=True)}
 
 def update_status_node(state: TaskManagerState , run_llm_func):
     # Pass a copy to avoid side effects
-    current_tasks = state["tasks"]
-    if not current_tasks:
+    df = state["tasks"].copy()
+    if df.empty:
         print("No tasks available to update.")
-        return {"tasks": current_tasks}
+        return {"tasks": df}
     
     # First Phase : Select relevant tasks based on user input
-    corpus = print_update_message(current_tasks)
+    corpus = print_update_message(df)
     # join into one string for LLM understanding
-    corpus_str = state["user_prev_message"] + "\n\nThis is a sheet of my tasks :\n\n" + "\n\n".join(corpus)
+    corpus_str = str(state.get("user_prev_message", "")) + "\n\nThis is a sheet of my tasks :\n\n" + "\n\n".join(corpus)
 
     response = run_llm_func(prompt=corpus_str, system_prompt=select_task_prompt())
     # parse response to get selected tasks and justification
@@ -146,21 +152,14 @@ def update_status_node(state: TaskManagerState , run_llm_func):
     print(f"🧠 {justification}")
 
     # validate they exist in current tasks
-    valid_task_ids = {str(task["id"]): task for task in current_tasks}
-    valid_tasks = []
-    for task_id in selected_tasks:
-        if str(task_id) not in valid_task_ids:
-            print(f"Task ID {task_id} is not valid. Skipping.")
-            continue
-        else:
-            print(f"Task ID {task_id} is valid and will be updated.")
-            valid_tasks.append(valid_task_ids[str(task_id)])
-    if not valid_tasks:
+    valid_tasks_df = df[df["id"].astype(str).isin([str(tid) for tid in selected_tasks])]
+    
+    if valid_tasks_df.empty:
         print("No valid tasks selected for update.")
-        return {"tasks": current_tasks}
+        return {"tasks": df}
     
     # Second Phase : Get new status for selected tasks
-    valid_task_corpus = print_update_message(valid_tasks)
+    valid_task_corpus = print_update_message(valid_tasks_df)
     user_prompt = f"""
     User : {state.get("user_prev_message", "")}
     Selected Tasks : {"\n\n".join(valid_task_corpus)}
@@ -173,41 +172,46 @@ def update_status_node(state: TaskManagerState , run_llm_func):
     
     state['prev_message'] = update_justification
     
+    print("="*50)
     print(f"🧠 {update_justification}")
+    print("="*50)
+
     # validate updated tasks info
     for update_info in updated_tasks_info:
         task_id = update_info.get("id")
         new_status = update_info.get("new_status")
-        if str(task_id) not in valid_task_ids:
-            print(f"Task ID {task_id} in update info is not valid. Skipping.")
-            continue
         
-        # Update the task status
-        current_tasks = update_task_status(current_tasks, task_id, new_status)
+        # Update the task status in the DataFrame
+        df = update_task_status(df, task_id, new_status)
         print(f"Task ID {task_id} status updated to {new_status}.")
     
+    state["tasks"] = df
     return state
 
 def delete_tasks_node(state: TaskManagerState , run_llm_func) -> TaskManagerState:
 
-    tasks = state["tasks"]
-    if not tasks:
+    df = state["tasks"].copy()
+    if df.empty:
         print("No tasks available to delete.")
-        return {"tasks": tasks}
+        return {"tasks": df}
     
-    corpus = print_update_message(tasks)
-    corpus_str = state["user_prev_message"] + "\n\nThis is a sheet of my tasks :\n\n" + "\n\n".join(corpus)
+    print("Deleting tasks based on user input...")
+    corpus = print_update_message(df, verbose=False)
+    corpus_str = str(state.get("user_prev_message", "")) + "\n\nThis is a sheet of my tasks :\n\n" + "\n\n".join(corpus)
     response = run_llm_func(prompt=corpus_str, system_prompt=delete_task_prompt())
     response_json = parse_general_json_bracketed_string(response)
     selected_tasks = response_json.get("deleted_tasks", [])
     justification = response_json.get("justification", "")
-    print(f"🧠 {justification}")
 
-    for did in selected_tasks:
-        tasks = delete_task_by_id(tasks, did)
+    print("="*50)
+    print(f"🧠 {justification}")
+    print("="*50)
+
+    for did in selected_tasks:# this can be done better using pandas filtering but we want to keep it simple and clear for now
+        df = delete_task_by_id(df, did)
         print(f"Task ID {did} deleted.")
 
-    return {"tasks": tasks}
+    return {"tasks": df}
 
 def exit_node(state: TaskManagerState):
     return {"exit_requested": True}
