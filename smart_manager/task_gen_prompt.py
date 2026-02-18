@@ -16,6 +16,7 @@ If a task is broken down into subtasks , make sure to include the dependencies b
       "id": 1,
       "title": "<short title for the task>",
       "description": "<task description>",
+      "priority": "<high|medium|low>",
       "date": "<date in YYYY-MM-DD format>",
       "time": "<time in HH:MM format>",
       "dependencies": [<task_i_id> , ...]
@@ -27,6 +28,7 @@ If a task is broken down into subtasks , make sure to include the dependencies b
 ## Output Rules
 - The output must be in the specified JSON format .
 - Each task must have a unique id .
+- The priority field should reflect the importance and urgency of the task (high, medium, low).
 - The description should be concise and clear .
 - The date and time should be in the specified format .
 - If a task has dependencies , list the ids of the tasks it depends on in the dependencies field .

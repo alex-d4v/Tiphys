@@ -1,4 +1,5 @@
 import uuid
+import datetime as dt
 from const import STATUS_OPTIONS
 from utils.parse_utils import parse_index_and_index_range_string
 from utils.print_utils import print_update_message 
@@ -30,7 +31,15 @@ def update_task_status_by_index(tasks: list) -> list:
                 if status_index < 1 or status_index > len(STATUS_OPTIONS):
                     print("Invalid status number.")
                     continue
-                task["status"] = STATUS_OPTIONS[status_index - 1]
+                new_status = STATUS_OPTIONS[status_index - 1]
+                
+                # Metadata update
+                if new_status == "on work" and task.get("status") != "on work":
+                    task["started_at"] = dt.datetime.now().isoformat()
+                elif new_status == "done" and task.get("status") != "done":
+                    task["ended_at"] = dt.datetime.now().isoformat()
+                
+                task["status"] = new_status
             except ValueError:
                 print("Invalid input for status. Please enter a number.")
                 continue
@@ -48,7 +57,13 @@ def update_task_status(current_tasks: list , task_id : uuid.UUID , new_status : 
         return current_tasks
     
     for task in current_tasks:
-        if task["id"] == task_id:
+        if str(task["id"]) == str(task_id):
+            # Metadata update
+            if new_status == "on work" and task.get("status") != "on work":
+                task["started_at"] = dt.datetime.now().isoformat()
+            elif new_status == "done" and task.get("status") != "done":
+                task["ended_at"] = dt.datetime.now().isoformat()
+            
             task["status"] = new_status
             break
     return current_tasks

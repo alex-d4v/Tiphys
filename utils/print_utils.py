@@ -33,16 +33,16 @@ def print_tasks_table(tasks: list) -> None:
     COL_ID     = 10
     COL_DESC   = 55
     COL_DATE   = 12
-    COL_TIME   = 10
+    COL_PRIO   = 10
     COL_DEP    = 30
     COL_STATUS = 16
 
-    border_top = f"┌{'─'*(COL_ID+2)}┬{'─'*(COL_DESC+2)}┬{'─'*(COL_DATE+2)}┬{'─'*(COL_TIME+2)}┬{'─'*(COL_DEP+2)}┬{'─'*(COL_STATUS+2)}┐"
-    border_mid = f"├{'─'*(COL_ID+2)}┼{'─'*(COL_DESC+2)}┼{'─'*(COL_DATE+2)}┼{'─'*(COL_TIME+2)}┼{'─'*(COL_DEP+2)}┼{'─'*(COL_STATUS+2)}┤"
-    border_bot = f"└{'─'*(COL_ID+2)}┴{'─'*(COL_DESC+2)}┴{'─'*(COL_DATE+2)}┴{'─'*(COL_TIME+2)}┴{'─'*(COL_DEP+2)}┴{'─'*(COL_STATUS+2)}┘"
+    border_top = f"┌{'─'*(COL_ID+2)}┬{'─'*(COL_DESC+2)}┬{'─'*(COL_DATE+2)}┬{'─'*(COL_PRIO+2)}┬{'─'*(COL_DEP+2)}┬{'─'*(COL_STATUS+2)}┐"
+    border_mid = f"├{'─'*(COL_ID+2)}┼{'─'*(COL_DESC+2)}┼{'─'*(COL_DATE+2)}┼{'─'*(COL_PRIO+2)}┼{'─'*(COL_DEP+2)}┼{'─'*(COL_STATUS+2)}┤"
+    border_bot = f"└{'─'*(COL_ID+2)}┴{'─'*(COL_DESC+2)}┴{'─'*(COL_DATE+2)}┴{'─'*(COL_PRIO+2)}┴{'─'*(COL_DEP+2)}┴{'─'*(COL_STATUS+2)}┘"
 
     print(f"\n{border_top}")
-    print(f"│ {'ID':<{COL_ID}} │ {'Description':<{COL_DESC}} │ {'Date':<{COL_DATE}} │ {'Time':<{COL_TIME}} │ {'Dependencies':<{COL_DEP}} │ {'Status':<{COL_STATUS}} │")
+    print(f"│ {'ID':<{COL_ID}} │ {'Description':<{COL_DESC}} │ {'Date':<{COL_DATE}} │ {'Priority':<{COL_PRIO}} │ {'Dependencies':<{COL_DEP}} │ {'Status':<{COL_STATUS}} │")
     print(border_mid)
 
     for task in tasks:
@@ -51,6 +51,7 @@ def print_tasks_table(tasks: list) -> None:
         dep_lines  = textwrap.wrap(dep_str, COL_DEP)
         desc_lines = textwrap.wrap(task["description"], COL_DESC)
         status     = STATUS_ICONS.get(task.get("status", "pending"), "○  pending")
+        priority   = str(task.get("priority", "medium")).center(COL_PRIO)
 
         max_lines  = max(len(desc_lines), len(dep_lines), 1)
         desc_lines += [""] * (max_lines - len(desc_lines))
@@ -58,10 +59,10 @@ def print_tasks_table(tasks: list) -> None:
 
         for j, (desc_line, dep_line) in enumerate(zip(desc_lines, dep_lines)):
             id_cell    = task_id if j == 0 else ""
-            date       = task["date"] if j == 0 else ""
-            time       = task["time"] if j == 0 else ""
+            date       = task.get("date", "") if j == 0 else ""
+            prio       = priority if j == 0 else ""
             status_col = status if j == 0 else ""
-            print(f"│ {id_cell:<{COL_ID}} │ {desc_line:<{COL_DESC}} │ {date:<{COL_DATE}} │ {time:<{COL_TIME}} │ {dep_line:<{COL_DEP}} │ {status_col:<{COL_STATUS}} │")
+            print(f"│ {id_cell:<{COL_ID}} │ {desc_line:<{COL_DESC}} │ {date:<{COL_DATE}} │ {prio} │ {dep_line:<{COL_DEP}} │ {status_col:<{COL_STATUS}} │")
 
         print(border_mid)
 

@@ -62,6 +62,12 @@ def main():
                 task["dependencies"] = []
             if "status" not in task or pd.isna(task.get("status")):
                 task["status"] = "pending"
+            if "priority" not in task or pd.isna(task.get("priority")):
+                task["priority"] = "medium"
+            if "started_at" not in task or pd.isna(task.get("started_at")):
+                task["started_at"] = None
+            if "ended_at" not in task or pd.isna(task.get("ended_at")):
+                task["ended_at"] = None
         print(f"Loaded {len(tasks)} existing tasks from data/tasks.csv")
     else:
         print("No existing tasks found. Starting fresh.")

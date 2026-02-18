@@ -96,6 +96,11 @@ def unpack_tasks(response: str) -> list[dict]:
 
         for task in tasks:
             task["id"] = str(uuid.uuid4())
+            # Initialize analysis fields
+            task["priority"] = task.get("priority", "medium")
+            task["status"] = "pending"
+            task["started_at"] = None
+            task["ended_at"] = None
 
         for task in tasks:
             temp_dependencies = []
