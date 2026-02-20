@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  # ── Neo4j Graph Database ─────────────────────────────────────────────────────
+  neo4j:
+    image: neo4j:latest
+    container_name: neo4j
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"  # HTTP port for Neo4j Browser
+      - "${NEO4J_BOLT_PORT:-7687}:7687"  # Bolt port for Neo4j drivers
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    environment:
+      - NEO4J_AUTH=${NEO4J_AUTH:-neo4j/password}
+      - NEO4J_PLUGINS=["apoc"]  # Optional: APOC plugin for advanced operations
+    networks:
+      - task_manager_network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+      
+volumes:
+  neo4j_data:
+    driver: local
+  neo4j_logs:
+    driver: local
+
+networks:
+  task_manager_network:
+    driver: bridge

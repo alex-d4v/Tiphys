@@ -2,13 +2,18 @@ import os
 import pandas as pd
 import json
 from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from smart_manager.workflow import create_workflow
+from neo4jmanager.manager import Neo4jManager
+from neo4jmanager.task_operations import TaskOperations
 
 
 # ── Ollama config ──────────────────────────────────────────────────────────────
-OLLAMA_BASE_URL = "http://localhost:11434/v1"
-MODEL_NAME      = "mistral:7b"
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+MODEL_NAME      = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 
 client = OpenAI(
     base_url=OLLAMA_BASE_URL,
@@ -20,7 +25,7 @@ if not os.path.exists("data"):
 
 #  LLM
 def run_llm(prompt: str, system_prompt: str = "You are a helpful assistant.") -> str:
-    """Send a prompt to Mistral 7B via Ollama and return the response text."""
+    """Send a prompt to model via Ollama and return the response text."""
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
@@ -36,7 +41,7 @@ def run_llm(prompt: str, system_prompt: str = "You are a helpful assistant.") ->
         return f"[LLM Error] {e}"
 
 def run_llm_embeddings(input: str) -> list[float]:
-    """Get embeddings from Mistral 7B via Ollama."""
+    """Get embeddings from model via Ollama."""
     try:
         response = client.embeddings.create(
             model=MODEL_NAME,
@@ -52,22 +57,17 @@ def main():
     print(f"Using model : {MODEL_NAME}")
     print(f"Ollama URL  : {OLLAMA_BASE_URL}\n")
 
-    tasks = []
-    if os.path.exists("data/tasks.csv"):
-        tasks = pd.read_csv("data/tasks.csv").to_dict(orient="records")
-        for task in tasks:
-            if isinstance(task["dependencies"], str) and task["dependencies"]:
-                task["dependencies"] = json.loads(task["dependencies"])
-            else:
-                task["dependencies"] = []
-            if "status" not in task or pd.isna(task.get("status")):
-                task["status"] = "pending"
-        print(f"Loaded {len(tasks)} existing tasks from data/tasks.csv")
-    else:
-        print("No existing tasks found. Starting fresh.")
+    # Initialize Neo4j
+    db_manager = Neo4jManager()
+    db_manager.initialize_schema()
+    db_ops = TaskOperations(db_manager)
+
+    # Initial state - Only today's tasks for the operating DF
+    tasks = db_ops.get_today_tasks()
+    print(f"Loaded {len(tasks)} tasks for today from Neo4j")
 
     # Initialize workflow
-    app = create_workflow(run_llm)
+    app = create_workflow(run_llm, run_llm_embeddings, db_ops)
 
     # Initial state
     state = {
@@ -92,16 +92,12 @@ def main():
         print(f"An error occurred: {e}")
         traceback.print_exc()
     finally:
-        if tasks:
-            df = pd.DataFrame(tasks)
-            df["dependencies"] = df["dependencies"].apply(json.dumps)
-            df.to_csv("data/tasks.csv", index=False)
-            print("Tasks saved to data/tasks.csv")
-        else:
-            # remove the file if there are no tasks to save
-            if os.path.exists("data/tasks.csv"):
-                os.remove("data/tasks.csv")
-                print("No tasks to save. Existing data/tasks.csv removed.")
+        # Shutdown check: ensure today's tasks were synced
+        if isinstance(tasks, pd.DataFrame) and not tasks.empty:
+            db_ops.store_tasks(tasks, embeddings_func=run_llm_embeddings)
+            print("Today's tasks synced to Neo4j.")
+        
+        db_manager.close()
         print("Exiting...")
 
 if __name__ == "__main__":

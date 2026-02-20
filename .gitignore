@@ -9,6 +9,7 @@ __pycache__/
 venv/
 ENV/
 env/
+.env
 
 # IDE settings
 .vscode/
@@ -22,3 +23,5 @@ Thumds.db
 desktop.ini
 !LICENSE
 !README.md
+
+*.sh

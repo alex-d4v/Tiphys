@@ -19,24 +19,35 @@ Today is he has {num_tasks_today} tasks scheduled for today.
 - Philosophical quotes always help to motivate the user, so you can include one if you think it fits the context.
 """
 
-def create_welcome_prompt(user_name: str, tasks: list) -> str:
+import pandas as pd
+def create_welcome_prompt(user_name: str, tasks: pd.DataFrame) -> str:
     from datetime import datetime
-    today = dt.datetime.now().strftime("%A, %B %d, %Y %H:%M:%S")
+    today_now = dt.datetime.now().strftime("%A, %B %d, %Y %H:%M:%S")
+    today_str = dt.datetime.now().strftime("%Y-%m-%d")
 
-    num_tasks        = len(tasks)
-    num_pending      = sum(1 for t in tasks if t.get("status") == "pending")
-    num_in_progress  = sum(1 for t in tasks if t.get("status") == "on work")
-    num_completed    = sum(1 for t in tasks if t.get("status") == "done")
-    num_tasks_today  = sum(1 for t in tasks if t.get("date") == today)
+    if tasks.empty:
+        num_tasks        = 0
+        num_pending      = 0
+        num_in_progress  = 0
+        num_completed    = 0
+        num_tasks_today  = 0
+        tasks_overview   = "No current tasks."
+    else:
+        num_tasks        = len(tasks)
+        num_pending      = (tasks["status"] == "pending").sum()
+        num_in_progress  = (tasks["status"] == "on work").sum()
+        num_completed    = (tasks["status"] == "done").sum()
+        num_tasks_today  = (tasks["date"] == today_str).sum()
 
-    tasks_overview   = "\n".join(f"- {t['description']} (Status: {t.get('status', 'pending')})" for t in tasks)
+        tasks_overview   = "\n".join(f"- {row['description']} (Status: {row.get('status', 'pending')})" for _, row in tasks.iterrows())
+    
     # check the context length of the tasks overview and truncate if it's too long
     if len(tasks_overview) > 1000:
         tasks_overview = tasks_overview[:1000] + "\n... (truncated)"
 
     return WELCOME_PROMPT.format(
         user_name=user_name,
-        today=dt.datetime.now().strftime("%A, %B %d, %Y"),
+        today=today_now,
         num_tasks=num_tasks,
         num_pending=num_pending,
         num_in_progress=num_in_progress,
@@ -46,7 +57,7 @@ def create_welcome_prompt(user_name: str, tasks: list) -> str:
     )
 
 GENERAL_MESSAGE_PROMPT = """
-Today is {today}.
+The datetime is {today}.
 You are a work companion assistant. The user is undergoing with you a journey as he tries to achieve his goals .
 Your response should be a helpful and concise message that directly addresses the user's input.
 Try to respond in a way that encourages the user to take action towards their goals .
@@ -60,7 +71,29 @@ You previously said : {prev_message}
 """
 
 def create_general_message_prompt(prev_message: str | None = None) -> str:
-    today = dt.datetime.now().strftime("%A, %B %d, %Y %H:%M:%S")
+    today_now = dt.datetime.now().strftime("%A, %B %d, %Y %H:%M:%S")
     prev_message = prev_message or "No previous message."
-    return GENERAL_MESSAGE_PROMPT.format(today=today, prev_message=prev_message)
+    return GENERAL_MESSAGE_PROMPT.format(today=today_now, prev_message=prev_message)
+
+COMMENT_TASKS_PROMPT = """
+The datetime is {today}.
+You are a helpful task companion. You have been given a list of tasks that are scheduled around the current time .
+Your job is to provide a helpful comment , suggestion or encouragement for each of these tasks .
+Be concise but meaningful.
+
+## Tasks to comment on :
+{tasks_str}
+
+## Output Format :
+Always respond with a friendly message that includes your comments on the tasks provided.
+"""
+
+def create_comment_tasks_prompt(tasks: pd.DataFrame) -> str:
+    today_now = dt.datetime.now().strftime("%A, %B %d, %Y %H:%M:%S")
+    if tasks.empty:
+        tasks_str = "No tasks found in the specified time range."
+    else:
+        tasks_str = "\n".join([f"- [{task['time']}] {task['description']} (Status: {task['status']})" for _, task in tasks.iterrows()])
+    
+    return COMMENT_TASKS_PROMPT.format(today=today_now, tasks_str=tasks_str)
 

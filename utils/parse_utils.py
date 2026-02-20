@@ -19,6 +19,8 @@ def parse_action_string(s: str) -> str:
         return 'list_tasks'
     elif s in ['d', 'delete']:
         return 'delete_tasks'
+    elif s in ['c', 'comment']:
+        return 'comment_tasks'
     else:
         return 'unknown'
 
@@ -60,14 +62,23 @@ def _extract_json(s: str) -> str:
     match = re.search(r"```\s*(.*?)\n?```", s, re.DOTALL)
     if match:
         return match.group(1).strip()
-        
-    # Fallback to finding the first { and corresponding }
-    # This is a bit naive but works for simple cases
-    json_start = s.find("{")
-    json_end = s.rfind("}")
-    if json_start != -1 and json_end != -1:
-        return s[json_start:json_end+1].strip()
-        
+
+    # Normalize escaped braces {{ }} -> { }
+    normalized = s.replace("{{", "{").replace("}}", "}")
+
+    # Try to find the first { ... } block in the normalized string
+    json_start = normalized.find("{")
+    json_end = normalized.rfind("}")
+    if json_start != -1 and json_end != -1 and json_start < json_end:
+        json_str = normalized[json_start:json_end + 1]
+        try:
+            json.loads(json_str)
+            return json_str.strip()
+        except json.JSONDecodeError:
+            pass
+
+    print("No valid JSON found in the string.")
+    print(f"String content was:\n{s}")
     return ""
 
 def parse_general_json_bracketed_string(s: str) -> dict:
@@ -96,6 +107,11 @@ def unpack_tasks(response: str) -> list[dict]:
 
         for task in tasks:
             task["id"] = str(uuid.uuid4())
+            # Initialize analysis fields
+            task["priority"] = task.get("priority", "medium")
+            task["status"] = "pending"
+            task["started_at"] = None
+            task["ended_at"] = None
 
         for task in tasks:
             temp_dependencies = []

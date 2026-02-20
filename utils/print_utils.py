@@ -1,3 +1,4 @@
+import pandas as pd
 import datetime as dt
 
 STATUS_ICONS = {
@@ -7,70 +8,138 @@ STATUS_ICONS = {
     "done":          "●  done",
 }
 
-def print_update_message(tasks: list , verbose : bool = True) -> list[str]:
-    corpus =["\n── Update Task Status ─────────────────────────────",] 
+def task_order(df: pd.DataFrame) -> pd.DataFrame:
+    priority_map = {"high": 1, "medium": 2, "low": 3}
+    
+    if df.empty:
+        return df
+
+    # Create temporary sort keys
+    df_copy = df.copy()
+    
+    df_copy["date_sort"] = df_copy["date"].fillna("9999-12-31").astype(str)
+    df_copy["time_sort"] = df_copy["time"].fillna("23:59").astype(str)
+    
+    # Handle priority mapping safely
+    def get_prio_val(p):
+        p_str = str(p).lower() if p and not pd.isna(p) else "medium"
+        return priority_map.get(p_str, 2)
+        
+    df_copy["prio_sort"] = df_copy["priority"].apply(get_prio_val)
+    
+    df_sorted = df_copy.sort_values(by=["date_sort", "time_sort", "prio_sort"]).drop(columns=["date_sort", "time_sort", "prio_sort"])
+    
+    return df_sorted
+
+def print_update_message(tasks: pd.DataFrame, verbose: bool = True) -> list[str]:
+    title_line = "\n>>> SELECT TASKS <<<\n" + "-"*75
+    corpus = [title_line] 
     
     if verbose:
-        print(corpus[0])
-    for i, task in enumerate(tasks):
-        id = task["id"]
-        title = task["title"] if task.get("title") else f"Task {task['id']}"
-        desc_text = "".join(line + '\n' for line in task["description"].splitlines())
-        short_desc = desc_text if len(desc_text) <= 50 else desc_text[:47] + "..."
-        current    = STATUS_ICONS.get(task.get("status", "pending"), "○  pending")
+        print(title_line)
+    
+    # Handle list input for backward compatibility during transition or if passed from unpack_tasks
+    if isinstance(tasks, list):
+        tasks_list = tasks
+    else:
+        tasks_list = tasks.to_dict(orient="records")
+
+    for i, task in enumerate(tasks_list):
+        task_id = task["id"]
+        prio = str(task.get("priority", "medium")).upper()
+        desc_clean = str(task.get("description", "")).replace('\n', ' ')
+        short_desc = desc_clean if len(desc_clean) <= 45 else desc_clean[:42] + "..."
+        current_icon = STATUS_ICONS.get(task.get("status", "pending"), "(P)")
+        
         if verbose:
-            print(f"  [{i+1}] {short_desc:<53} {current}")
-        # the same string to corpus for LLM understanding
-        corpus.append(f" Title : {title} | ID : {id} | Description : {desc_text} | Status : {current}")
+            print(f"  ({i+1:<2}) [{prio:<6}] {short_desc:<45} {current_icon}")
+            
+        corpus_entry = f"ID: {task_id} | Priority: {prio} | Description: {desc_clean} | Status: {task.get('status', 'pending')}"
+        corpus.append(corpus_entry)
+        
     if verbose:
-        print("───────────────────────────────────────────────────")
+        print("-" * 75)
+        print("  (0)  CANCEL")
+        print("-" * 75)
+    
     corpus.append("  [0] Cancel")
     return corpus
 
 # ── Table printer ──────────────────────────────────────────────────────────────
-def print_tasks_table(tasks: list) -> None:
+def print_tasks_table(tasks: pd.DataFrame) -> None:
     import textwrap
-    COL_ID     = 10
-    COL_DESC   = 55
-    COL_DATE   = 12
-    COL_TIME   = 10
-    COL_DEP    = 30
-    COL_STATUS = 16
+    
+    if tasks.empty:
+        print("No tasks to display.")
+        return
+        
+    # Simple ASCII widths
+    COL_ID     = 8
+    COL_PRIO   = 6
+    COL_DESC   = 40
+    COL_DATE   = 10
+    COL_TIME   = 5
+    COL_DEP    = 15
+    COL_STATUS = 12
 
-    border_top = f"┌{'─'*(COL_ID+2)}┬{'─'*(COL_DESC+2)}┬{'─'*(COL_DATE+2)}┬{'─'*(COL_TIME+2)}┬{'─'*(COL_DEP+2)}┬{'─'*(COL_STATUS+2)}┐"
-    border_mid = f"├{'─'*(COL_ID+2)}┼{'─'*(COL_DESC+2)}┼{'─'*(COL_DATE+2)}┼{'─'*(COL_TIME+2)}┼{'─'*(COL_DEP+2)}┼{'─'*(COL_STATUS+2)}┤"
-    border_bot = f"└{'─'*(COL_ID+2)}┴{'─'*(COL_DESC+2)}┴{'─'*(COL_DATE+2)}┴{'─'*(COL_TIME+2)}┴{'─'*(COL_DEP+2)}┴{'─'*(COL_STATUS+2)}┘"
+    cols = [COL_ID, COL_PRIO, COL_DESC, COL_DATE, COL_TIME, COL_DEP, COL_STATUS]
+    
+    # Plain ASCII Borders
+    sep = "+" + "+".join("-" * (c + 2) for c in cols) + "+"
+    head_sep = "+" + "+".join("=" * (c + 2) for c in cols) + "+"
 
-    print(f"\n{border_top}")
-    print(f"│ {'ID':<{COL_ID}} │ {'Description':<{COL_DESC}} │ {'Date':<{COL_DATE}} │ {'Time':<{COL_TIME}} │ {'Dependencies':<{COL_DEP}} │ {'Status':<{COL_STATUS}} │")
-    print(border_mid)
+    print(f"\n{head_sep}")
+    headers = ["ID", "PRIO", "DESCRIPTION", "DATE", "TIME", "DEPS", "STATUS"]
+    header_row = "| " + " | ".join(f"{h:<{c}}" for h, c in zip(headers, cols)) + " |"
+    print(header_row)
+    print(head_sep)
 
-    for task in tasks:
-        task_id    = str(task["id"])[:COL_ID]
-        dep_str    = ", ".join(str(d)[:COL_ID] for d in task["dependencies"]) if task["dependencies"] else "None"
-        dep_lines  = textwrap.wrap(dep_str, COL_DEP)
-        desc_lines = textwrap.wrap(task["description"], COL_DESC)
-        status     = STATUS_ICONS.get(task.get("status", "pending"), "○  pending")
+    sorted_tasks = task_order(tasks)
+    for _, task in sorted_tasks.iterrows():
+        task_id  = str(task["id"])[:COL_ID]
+        prio     = str(task.get("priority", "med")).upper()[:COL_PRIO]
+        desc     = str(task.get("description", ""))
+        date     = str(task.get("date", "N/A"))
+        time     = str(task.get("time", "--:--"))
+        status   = str(task.get("status", "pending"))
+        
+        # Simple status text
+        status_text = status.upper()[:COL_STATUS]
+        
+        desc_lines = textwrap.wrap(desc, COL_DESC)
+        dep_ids = task.get("dependencies", [])
+        dep_str = ", ".join(str(d)[:6] for d in dep_ids) if isinstance(dep_ids, list) and dep_ids else "-"
+        dep_lines = textwrap.wrap(dep_str, COL_DEP)
+        
+        max_lines = max(len(desc_lines), len(dep_lines), 1)
+        # Ensure at least one line per task
+        while len(desc_lines) < max_lines: desc_lines.append("")
+        while len(dep_lines) < max_lines: dep_lines.append("")
 
-        max_lines  = max(len(desc_lines), len(dep_lines), 1)
-        desc_lines += [""] * (max_lines - len(desc_lines))
-        dep_lines  += [""] * (max_lines - len(dep_lines))
+        for i in range(max_lines):
+            id_val   = task_id if i == 0 else ""
+            pr_val   = prio if i == 0 else ""
+            dt_val   = date if i == 0 else ""
+            tm_val   = time if i == 0 else ""
+            st_val   = status_text if i == 0 else ""
+            
+            row = "| " + " | ".join([
+                f"{id_val:<{COL_ID}}",
+                f"{pr_val:<{COL_PRIO}}",
+                f"{desc_lines[i]:<{COL_DESC}}",
+                f"{dt_val:<{COL_DATE}}",
+                f"{tm_val:<{COL_TIME}}",
+                f"{dep_lines[i]:<{COL_DEP}}",
+                f"{st_val:<{COL_STATUS}}"
+            ]) + " |"
+            print(row)
+        print(sep)
+    return None
 
-        for j, (desc_line, dep_line) in enumerate(zip(desc_lines, dep_lines)):
-            id_cell    = task_id if j == 0 else ""
-            date       = task["date"] if j == 0 else ""
-            time       = task["time"] if j == 0 else ""
-            status_col = status if j == 0 else ""
-            print(f"│ {id_cell:<{COL_ID}} │ {desc_line:<{COL_DESC}} │ {date:<{COL_DATE}} │ {time:<{COL_TIME}} │ {dep_line:<{COL_DEP}} │ {status_col:<{COL_STATUS}} │")
-
-        print(border_mid)
-
-    print(f"\033[A{border_bot}")
-
-def print_tasks_table_today(tasks: list) -> None :
+def print_tasks_table_today(tasks: pd.DataFrame) -> None :
     today = dt.datetime.now().strftime("%Y-%m-%d")
-    today_tasks = [task for task in tasks if task["date"] == today]
-    if not today_tasks:
+    today_tasks = tasks[tasks["date"] == today]
+    if today_tasks.empty:
         print("No tasks scheduled for today.")
         return None
     else:
