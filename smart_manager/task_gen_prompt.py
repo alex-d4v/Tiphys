@@ -19,6 +19,8 @@ If a task is broken down into subtasks , make sure to include the dependencies b
       "priority": "<high|medium|low>",
       "date": "<date in YYYY-MM-DD format>",
       "time": "<time in HH:MM format>",
+      "started_at": null,
+      "ended_at": null,
       "dependencies": [<task_i_id> , ...]
     }},
     ],

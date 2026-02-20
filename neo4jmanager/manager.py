@@ -94,7 +94,7 @@ class Neo4jManager:
                     CREATE VECTOR INDEX task_embedding_idx IF NOT EXISTS
                     FOR (t:Task) ON (t.embedding)
                     OPTIONS {indexConfig: {
-                        `vector.dimensions`: 1024,
+                        `vector.dimensions`: 3584,
                         `vector.similarity_function`: 'cosine'
                     }}
                 """)
@@ -102,6 +102,29 @@ class Neo4jManager:
             except Exception as e:
                 print(f"⚠ Vector index creation skipped: {e}")
                 print("  (This is fine if you're using Neo4j < 5.11 or without vector plugin)")
+            
+            # Warm up properties to define them in the schema and avoid notifications
+            try:
+                session.run("""
+                    MERGE (s:_SchemaHints_ {id: 'default'})
+                    SET s.started_at = "", 
+                        s.ended_at = "", 
+                        s.priority = "medium",
+                        s.status = "pending",
+                        s.time = "",
+                        s.date = "",
+                        s.updated_at = datetime()
+                """)
+                # Also create the nodes and immediately delete them to ensure 
+                # they're seen by the query planner for the Task label
+                session.run("""
+                    CREATE (t:Task {id: '_warmup_'})
+                    SET t.started_at = "", t.ended_at = "", t.updated_at = datetime()
+                    DETACH DELETE t
+                """)
+            except Exception as e:
+                print(f"⚠ Warmup failed: {e}")
+                pass
             
             print("✓ Schema initialized successfully")
     

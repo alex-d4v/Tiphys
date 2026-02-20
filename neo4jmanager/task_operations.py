@@ -4,7 +4,7 @@ CRUD operations and queries for Task nodes
 """
 import pandas as pd
 from typing import List, Dict, Optional, Any
-from .neo4j_manager import Neo4jManager
+from .manager import Neo4jManager
 
 
 class TaskOperations:
@@ -117,7 +117,9 @@ class TaskOperations:
             result = session.run(query, status=status)
             records = [dict(record) for record in result]
             
-            return pd.DataFrame(records) if records else pd.DataFrame()
+            # Ensure we return a DataFrame with expected columns even if empty
+            cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies"]
+            return pd.DataFrame(records, columns=cols) if records else pd.DataFrame(columns=cols)
     
     def get_task_by_id(self, task_id: str) -> Optional[Dict[str, Any]]:
         """Get a single task by ID."""
@@ -139,6 +141,62 @@ class TaskOperations:
             
             record = result.single()
             return dict(record) if record else None
+
+    def get_tasks_by_time_range(self, start_date: str, start_time: str, end_date: str, end_time: str, limit: int = 10) -> pd.DataFrame:
+        """
+        Get tasks within a given date/time range.
+        Note: Simple string comparison for Cypher.
+        """
+        with self.db.driver.session() as session:
+            # Match tasks where (date > start_date OR (date == start_date AND time >= start_time))
+            # AND (date < end_date OR (date == end_date AND time <= end_time))
+            query = """
+                MATCH (t:Task)
+                WHERE (t.date > $start_date OR (t.date = $start_date AND t.time >= $start_time))
+                  AND (t.date < $end_date OR (t.date = $end_date AND t.time <= $end_time))
+                OPTIONAL MATCH (t)-[:DEPENDS_ON]->(d:Task)
+                WITH t, collect(d.id) as dependencies
+                RETURN t.id as id,
+                       t.description as description,
+                       t.date as date,
+                       t.time as time,
+                       t.priority as priority,
+                       t.status as status,
+                       t.started_at as started_at,
+                       t.ended_at as ended_at,
+                       dependencies
+                ORDER BY t.date, t.time
+                LIMIT $limit
+            """
+            result = session.run(query, start_date=start_date, start_time=start_time, end_date=end_date, end_time=end_time, limit=limit)
+            records = [dict(record) for record in result]
+            cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies"]
+            return pd.DataFrame(records, columns=cols) if records else pd.DataFrame(columns=cols)
+            
+    def get_today_tasks(self) -> pd.DataFrame:
+        """Get all tasks for today (or with today's date)."""
+        import datetime
+        today = datetime.date.today().isoformat()
+        with self.db.driver.session() as session:
+            result = session.run("""
+                MATCH (t:Task {date: $today})
+                OPTIONAL MATCH (t)-[:DEPENDS_ON]->(d:Task)
+                WITH t, collect(d.id) as dependencies
+                RETURN t.id as id,
+                       t.description as description,
+                       t.date as date,
+                       t.time as time,
+                       t.priority as priority,
+                       t.status as status,
+                       t.started_at as started_at,
+                       t.ended_at as ended_at,
+                       dependencies
+                ORDER BY t.time
+            """, today=today)
+            
+            records = [dict(record) for record in result]
+            cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies"]
+            return pd.DataFrame(records, columns=cols) if records else pd.DataFrame(columns=cols)
     
     def get_relevant_tasks_by_task(self, task_id: str, max_depth: int = 2) -> pd.DataFrame:
         """
@@ -171,7 +229,8 @@ class TaskOperations:
             """ % max_depth, task_id=task_id)
             
             records = [dict(record) for record in result]
-            return pd.DataFrame(records) if records else pd.DataFrame()
+            cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies"]
+            return pd.DataFrame(records, columns=cols) if records else pd.DataFrame(columns=cols)
     
     def get_relevant_tasks_by_query(self, query_embedding: List[float], top_k: int = 5) -> pd.DataFrame:
         """
@@ -207,13 +266,15 @@ class TaskOperations:
                 """, query_embedding=query_embedding, top_k=top_k)
                 
                 records = [dict(record) for record in result]
-                return pd.DataFrame(records) if records else pd.DataFrame()
+                cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies", "score"]
+                return pd.DataFrame(records, columns=cols) if records else pd.DataFrame(columns=cols)
             
             except Exception as e:
                 print(f"Vector search failed: {e}")
                 print("Falling back to text-based search...")
                 # Fallback: return empty or implement text-based search
-                return pd.DataFrame()
+                cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies", "score"]
+                return pd.DataFrame(columns=cols)
     
     def show_task_path(self, start_task_id: str, end_task_id: Optional[str] = None) -> List[Dict]:
         """
@@ -266,6 +327,31 @@ class TaskOperations:
                     t.updated_at = datetime()
                 RETURN t
             """, task_id=task_id, new_status=new_status)
+            
+            return result.single() is not None
+            
+    def update_task(self, task_id: str, update_dict: Dict[str, Any]) -> bool:
+        """Generic update for any task properties."""
+        if not update_dict:
+            return False
+            
+        # Don't allow updating id
+        update_dict.pop("id", None)
+        
+        # Format set string
+        set_clauses = []
+        for key in update_dict.keys():
+            set_clauses.append(f"t.{key} = ${key}")
+        
+        set_clauses.append("t.updated_at = datetime()")
+        set_query = "SET " + ", ".join(set_clauses)
+        
+        with self.db.driver.session() as session:
+            result = session.run(f"""
+                MATCH (t:Task {{id: $task_id}})
+                {set_query}
+                RETURN t
+            """, task_id=task_id, **update_dict)
             
             return result.single() is not None
     

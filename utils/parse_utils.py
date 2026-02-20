@@ -19,6 +19,8 @@ def parse_action_string(s: str) -> str:
         return 'list_tasks'
     elif s in ['d', 'delete']:
         return 'delete_tasks'
+    elif s in ['c', 'comment']:
+        return 'comment_tasks'
     else:
         return 'unknown'
 

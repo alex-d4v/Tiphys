@@ -75,3 +75,25 @@ def create_general_message_prompt(prev_message: str | None = None) -> str:
     prev_message = prev_message or "No previous message."
     return GENERAL_MESSAGE_PROMPT.format(today=today_now, prev_message=prev_message)
 
+COMMENT_TASKS_PROMPT = """
+The datetime is {today}.
+You are a helpful task companion. You have been given a list of tasks that are scheduled around the current time .
+Your job is to provide a helpful comment , suggestion or encouragement for each of these tasks .
+Be concise but meaningful.
+
+## Tasks to comment on :
+{tasks_str}
+
+## Output Format :
+Always respond with a friendly message that includes your comments on the tasks provided.
+"""
+
+def create_comment_tasks_prompt(tasks: pd.DataFrame) -> str:
+    today_now = dt.datetime.now().strftime("%A, %B %d, %Y %H:%M:%S")
+    if tasks.empty:
+        tasks_str = "No tasks found in the specified time range."
+    else:
+        tasks_str = "\n".join([f"- [{task['time']}] {task['description']} (Status: {task['status']})" for _, task in tasks.iterrows()])
+    
+    return COMMENT_TASKS_PROMPT.format(today=today_now, tasks_str=tasks_str)
+

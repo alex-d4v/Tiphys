@@ -2,13 +2,18 @@ import os
 import pandas as pd
 import json
 from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from smart_manager.workflow import create_workflow
+from neo4jmanager.manager import Neo4jManager
+from neo4jmanager.task_operations import TaskOperations
 
 
 # ── Ollama config ──────────────────────────────────────────────────────────────
-OLLAMA_BASE_URL = "http://localhost:11434/v1"
-MODEL_NAME      = "qwen2.5:7b"
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+MODEL_NAME      = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 
 client = OpenAI(
     base_url=OLLAMA_BASE_URL,
@@ -52,44 +57,17 @@ def main():
     print(f"Using model : {MODEL_NAME}")
     print(f"Ollama URL  : {OLLAMA_BASE_URL}\n")
 
-    tasks = pd.DataFrame()
-    if os.path.exists("data/tasks.csv"):
-        tasks = pd.read_csv("data/tasks.csv")
-        
-        # Ensure dependencies are list objects
-        if "dependencies" in tasks.columns:
-            def ensure_list(x):
-                if isinstance(x, str):
-                    try:
-                        return json.loads(x)
-                    except:
-                        return []
-                return x if isinstance(x, list) else []
-            tasks["dependencies"] = tasks["dependencies"].apply(ensure_list)
-        else:
-            tasks["dependencies"] = [[] for _ in range(len(tasks))]
+    # Initialize Neo4j
+    db_manager = Neo4jManager()
+    db_manager.initialize_schema()
+    db_ops = TaskOperations(db_manager)
 
-        # Fill missing values and ensure columns exist
-        cols_to_fill = {
-            "status": "pending",
-            "priority": "medium",
-            "date": "9999-12-31",
-            "time": "23:59"
-        }
-        for col, val in cols_to_fill.items():
-            if col not in tasks.columns:
-                tasks[col] = val
-            tasks[col] = tasks[col].fillna(val)
-        
-        if "started_at" not in tasks.columns: tasks["started_at"] = None
-        if "ended_at" not in tasks.columns: tasks["ended_at"] = None
-
-        print(f"Loaded {len(tasks)} existing tasks from data/tasks.csv")
-    else:
-        print("No existing tasks found. Starting fresh.")
+    # Initial state - Only today's tasks for the operating DF
+    tasks = db_ops.get_today_tasks()
+    print(f"Loaded {len(tasks)} tasks for today from Neo4j")
 
     # Initialize workflow
-    app = create_workflow(run_llm)
+    app = create_workflow(run_llm, run_llm_embeddings, db_ops)
 
     # Initial state
     state = {
@@ -114,17 +92,12 @@ def main():
         print(f"An error occurred: {e}")
         traceback.print_exc()
     finally:
+        # Shutdown check: ensure today's tasks were synced
         if isinstance(tasks, pd.DataFrame) and not tasks.empty:
-            df_to_save = tasks.copy()
-            # Convert list dependencies back to JSON strings for CSV
-            df_to_save["dependencies"] = df_to_save["dependencies"].apply(json.dumps)
-            df_to_save.to_csv("data/tasks.csv", index=False)
-            print("Tasks saved to data/tasks.csv")
-        else:
-            # remove the file if there are no tasks to save
-            if os.path.exists("data/tasks.csv"):
-                os.remove("data/tasks.csv")
-                print("No tasks to save. Existing data/tasks.csv removed.")
+            db_ops.store_tasks(tasks, embeddings_func=run_llm_embeddings)
+            print("Today's tasks synced to Neo4j.")
+        
+        db_manager.close()
         print("Exiting...")
 
 if __name__ == "__main__":
