@@ -61,13 +61,14 @@ def print_menu_node(state: TaskManagerState , run_llm_func) -> TaskManagerState:
 
     user_msg = ""
     auto_func = state.get("auto_func", False)
-    if not auto_func:
-        user_msg = input("User Input : ").strip().lower()
-    else:
-        user_msg = state.get("prev_message", "") or ""
-        print(f"\n\nAuto-prompting with previous message\n\n")
-        auto_func = False# this only happens once to pass the initial welcome message to the router for better context
+    #if not auto_func:
+    #    user_msg = input("User Input : ").strip().lower()
+    #else:
+    #    user_msg = state.get("prev_message", "") or ""
+    #    print(f"\n\nAuto-prompting with previous message\n\n")
+    #    auto_func = False# this only happens once to pass the initial welcome message to the router for better context
 
+    user_msg = input("User Input : ").strip().lower()
     response = run_llm_func(prompt=user_msg, system_prompt=select_action_prompt())
     # extract json first
     response_json = parse_general_json_bracketed_string(response)
@@ -228,10 +229,10 @@ def update_status_node(state: TaskManagerState , run_llm_func, run_llm_embedding
     return state
 
 def comment_tasks_node(state: TaskManagerState, run_llm_func, db_ops) -> TaskManagerState:
-    # Radius of 1h
+    # Radius of 12h
     now = datetime.datetime.now()
-    start_dt = now - datetime.timedelta(hours=1)
-    end_dt = now + datetime.timedelta(hours=1)
+    start_dt = now - datetime.timedelta(hours=12)
+    end_dt = now + datetime.timedelta(hours=12)
     
     start_date = start_dt.date().isoformat()
     start_time = start_dt.time().strftime("%H:%M")
@@ -347,7 +348,7 @@ def create_workflow(run_llm_func, run_llm_embeddings_func, db_ops):
     )
 
     # Back to menu after actions
-    workflow.add_edge("initial", "menu")
+    workflow.add_edge("initial", "comment_tasks")
     workflow.add_edge("generate_tasks", "menu")
     workflow.add_edge("update_status", "menu")
     workflow.add_edge("list_tasks", "menu")

@@ -77,7 +77,9 @@ def create_general_message_prompt(prev_message: str | None = None) -> str:
 
 COMMENT_TASKS_PROMPT = """
 The datetime is {today}.
-You are a helpful task companion. You have been given a list of tasks that are scheduled around the current time .
+You are a helpful task companion. You acompany the user in their journey to achieve their goals by providing helpful comments, 
+suggestions and encouragements on their tasks.
+You have been given a list of tasks that are scheduled around the current time .
 Your job is to provide a helpful comment , suggestion or encouragement for each of these tasks .
 Be concise but meaningful.
 
@@ -86,6 +88,7 @@ Be concise but meaningful.
 
 ## Output Format :
 Always respond with a friendly message that includes your comments on the tasks provided.
+Quotes or known facts always help to motivate the user, so you can include one if you think it fits the context.
 """
 
 def create_comment_tasks_prompt(tasks: pd.DataFrame) -> str:

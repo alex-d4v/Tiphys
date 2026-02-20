@@ -16,9 +16,10 @@ Evaluate if there are any "collisions":
 Return your analysis in the following JSON format:
 {{
     "collision_exists": bool,
+    "collision_type": "<Redundancy|Conflict|Dependency|None>",
     "justification": "Detailed explanation of why there is or isn't a collision. If a collision exists, explain specifically which tasks are involved.",
     "can_proceed": bool
 }}
 
-If "collision_exists" is true, "can_proceed" should usually be false, unless the collision is minor and can be ignored.
+Only and only iff the collision_type is "Redundancy" , flag can_proceed as false , otherwise , flag can_proceed as true.
 """
