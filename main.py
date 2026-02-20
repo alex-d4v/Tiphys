@@ -8,7 +8,7 @@ from smart_manager.workflow import create_workflow
 
 # ── Ollama config ──────────────────────────────────────────────────────────────
 OLLAMA_BASE_URL = "http://localhost:11434/v1"
-MODEL_NAME      = "mistral:7b"
+MODEL_NAME      = "qwen2.5:7b"
 
 client = OpenAI(
     base_url=OLLAMA_BASE_URL,
@@ -20,7 +20,7 @@ if not os.path.exists("data"):
 
 #  LLM
 def run_llm(prompt: str, system_prompt: str = "You are a helpful assistant.") -> str:
-    """Send a prompt to Mistral 7B via Ollama and return the response text."""
+    """Send a prompt to model via Ollama and return the response text."""
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
@@ -36,7 +36,7 @@ def run_llm(prompt: str, system_prompt: str = "You are a helpful assistant.") ->
         return f"[LLM Error] {e}"
 
 def run_llm_embeddings(input: str) -> list[float]:
-    """Get embeddings from Mistral 7B via Ollama."""
+    """Get embeddings from model via Ollama."""
     try:
         response = client.embeddings.create(
             model=MODEL_NAME,
