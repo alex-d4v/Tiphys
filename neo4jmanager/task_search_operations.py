@@ -27,7 +27,7 @@ class TaskSearchOperations:
         tools = []
         import inspect
         for method_name in dir(self):
-            if method_name.startswith("get_") and method_name != "get_relevant_tasks_by_query" and callable(getattr(self, method_name)):
+            if method_name.startswith("get_") and callable(getattr(self, method_name)) and method_name != "get_available_tools":
                 method = getattr(self, method_name)
                 signature = str(inspect.signature(method))
                 # Remove self from signature if present
@@ -40,29 +40,6 @@ class TaskSearchOperations:
                 })
         return tools
     
-    def get_task_by_id(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """Get a single task by ID."""
-        with self.db.driver.session() as session:
-            result = session.run("""
-                MATCH (t:Task {id: $task_id})
-                OPTIONAL MATCH (t)-[:DEPENDS_ON]->(d:Task)
-                OPTIONAL MATCH (future:Task)-[:DEPENDS_ON]->(t)
-                WITH t, collect(DISTINCT d.id) as dependencies, collect(DISTINCT future.id) as blocked_tasks
-                RETURN t.id as id,
-                       t.description as description,
-                       t.date as date,
-                       t.time as time,
-                       t.priority as priority,
-                       t.status as status,
-                       t.started_at as started_at,
-                       t.ended_at as ended_at,
-                       dependencies,
-                       blocked_tasks
-            """, task_id=task_id)
-            
-            record = result.single()
-            return dict(record) if record else None
-
     def get_tasks_by_time_range(self, start_date: str, end_date: str, start_time: str = None, end_time: str = None, limit: int = 10) -> pd.DataFrame:
         """
         Get tasks within a given date/time range.
@@ -144,12 +121,12 @@ class TaskSearchOperations:
             cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies", "blocked_tasks"]
             return pd.DataFrame(records, columns=cols) if records else pd.DataFrame(columns=cols)
     
-    def get_relevant_tasks_by_query(self, query_embedding: List[float], top_k: int = 5) -> pd.DataFrame:
+    def get_relevant_tasks_by_query(self, query: str, top_k: int = 5) -> pd.DataFrame:
         """
         Find tasks similar to a query using vector similarity search.
         
         Args:
-            query_embedding: Embedding vector for the search query
+            query: Search query string , it will be converted to embedding using the provided embeddings function
             top_k: Number of most similar tasks to return
         
         Returns:
@@ -157,6 +134,10 @@ class TaskSearchOperations:
         
         Note: Requires Neo4j 5.11+ with vector index support
         """
+        if not self.embeddings_func:
+            raise ValueError("Embeddings function not provided for vector search.")
+        
+        query_embedding = self.embeddings_func(query)
         with self.db.driver.session() as session:
             try:
                 result = session.run("""
@@ -188,19 +169,3 @@ class TaskSearchOperations:
                 print("Falling back to text-based search...")
                 cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies", "blocked_tasks", "score"]
                 return pd.DataFrame(columns=cols)
-
-    def get_relevant_tasks_by_text(self, query: str, top_k: int = 5) -> pd.DataFrame:
-        """
-        Find tasks similar to a text query using vector similarity search.
-        
-        Args:
-            query: Text string to search for
-            top_k: Number of most similar tasks to return
-        """
-        if not self.embeddings_func:
-            print("Embeddings function not provided. Cannot perform vector search.")
-            cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies", "blocked_tasks", "score"]
-            return pd.DataFrame(columns=cols)
-            
-        embedding = self.embeddings_func(query)
-        return self.get_relevant_tasks_by_query(embedding, top_k=top_k)

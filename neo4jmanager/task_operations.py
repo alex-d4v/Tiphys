@@ -211,51 +211,6 @@ class TaskOperations:
             cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies", "blocked_tasks"]
             return pd.DataFrame(records, columns=cols) if records else pd.DataFrame(columns=cols)
     
-    def get_relevant_tasks_by_query(self, query_embedding: List[float], top_k: int = 5) -> pd.DataFrame:
-        """
-        Find tasks similar to a query using vector similarity search.
-        
-        Args:
-            query_embedding: Embedding vector for the search query
-            top_k: Number of most similar tasks to return
-        
-        Returns:
-            DataFrame of similar tasks with similarity scores
-        
-        Note: Requires Neo4j 5.11+ with vector index support
-        """
-        with self.db.driver.session() as session:
-            try:
-                result = session.run("""
-                    CALL db.index.vector.queryNodes('task_embedding_idx', $top_k, $query_embedding)
-                    YIELD node, score
-                    OPTIONAL MATCH (node)-[:DEPENDS_ON]->(d:Task)
-                    OPTIONAL MATCH (future:Task)-[:DEPENDS_ON]->(node)
-                    WITH node, score, collect(DISTINCT d.id) as dependencies, collect(DISTINCT future.id) as blocked_tasks
-                    RETURN node.id as id,
-                        node.description as description,
-                        node.date as date,
-                        node.time as time,
-                        node.priority as priority,
-                        node.status as status,
-                        node.started_at as started_at,
-                        node.ended_at as ended_at,
-                        dependencies,
-                        blocked_tasks,
-                        score
-                    ORDER BY score DESC
-                """, query_embedding=query_embedding, top_k=top_k)
-                
-                records = [dict(record) for record in result]
-                cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies", "blocked_tasks", "score"]
-                return pd.DataFrame(records, columns=cols) if records else pd.DataFrame(columns=cols)
-            
-            except Exception as e:
-                print(f"Vector search failed: {e}")
-                print("Falling back to text-based search...")
-                cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies", "blocked_tasks", "score"]
-                return pd.DataFrame(columns=cols)
-    
     def show_task_path(self, start_task_id: str, end_task_id: Optional[str] = None) -> List[Dict]:
         """
         Find the dependency path between two tasks or show all paths from a task.

@@ -74,6 +74,8 @@ def main():
     db_manager.initialize_schema()
     db_ops = TaskOperations(db_manager)
     db_ops_search = TaskSearchOperations(db_manager, embeddings_func=run_llm_embeddings)  # Pass embeddings func to search operations
+    # when we have messed up xD
+    #db_manager.clear_database(confirm=True)
 
     # Initial state - Only today's tasks for the operating DF
     tasks = db_ops.get_today_tasks()

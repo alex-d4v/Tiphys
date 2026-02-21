@@ -33,9 +33,13 @@ def select_action_prompt():
 SELECT_SEARCH_TOOL_PROMPT = """
 Today is : {today}.
 
-You are a helpful assistant designed to help users manage their tasks and goals effectively.
-The user has provided an input that requires you to search for relevant tasks using a set of tool .
-Your task is to classify the user's input into one of the following search tools based on the content of the message and the user's intent:
+You are a helpful assistant on selecting tools for exploring and searching for relevant tasks .
+You act as an interface between the user and the database .
+You are given a set of retrieval tools that can be used to explore the database .
+The user has provided an input that requires you to search for relevant tasks using this set of tools .
+You are trying to check whether this specific input can be matched to any of the available tasks in the database .
+Your task is to classify the user's input into a set of tool-s based on the following available search tools . 
+You have to match the user's input to one or more of the tools that can be effectively used to find relevant tasks in the database .
 
 The available search tools are:
 {signatures}
@@ -44,13 +48,14 @@ The available search tools are:
 ```json
 {{
     "selected_tools": [<tool_function_name> , ...],
-    "justification": "The user's input contains a specific date, indicating that they want to search for tasks related to that date."
+    "justification": "<justification_of_tool_selection>"
 }}
 ```
 
 ## Response Factor:
 - The `selected_tools` field should contain a list of `tool_function_name` strings from the available search tools above.
-- The `justification` field should provide a brief explanation of why the selected tools were chosen based on the user's input.
+- At least one tool should be selected . It is possible that more than one tool is suitable to use based on the user's input . Select them all .
+- The `justification` field should provide the specification of the tool on the use case .
 - This is a multiclass classification task . It is probable that more than one tool is suitable to use based on the user's input .
 - Only provide the JSON output as specified, no other text.
 """
@@ -68,21 +73,28 @@ Name: {tool_name}
 Signature: {signature}
 Description: {description}
 
-USER MESSAGE:
-{user_input}
+## Output Format
+```json
+{{
+    "args": {{
+        <param_name>: <param_value>,
+        ...
+    }},
+    "justification": "<a brief explanation of how the parameters were extracted from the user's input>"
+}}
+```
 
-## Instructions:
-1. Extract values for the parameters listed in the signature.
-2. Return the parameters in a JSON object with a 'args' key.
-3. If a parameter is a string, provide a string. Dates should be YYYY-MM-DD.
+## Response Factor:
+- The `args` field should contain a dictionary of parameter names and their corresponding values extracted from the user's input. The parameter names should match those in the tool's signature.
+- The `justification` field should provide a brief explanation of how the parameters were extracted from the user's input, including any relevant context or reasoning.
+- Only provide the JSON output as specified, no other text.
 """
 
-def parametrize_tool_prompt(tool_info, user_input):
+def parametrize_tool_prompt(tool_info):
     today = dt.datetime.now().strftime("%A, %B %d, %Y %H:%M:%S")
     return PARAMETRIZE_TOOL.format(
         today=today,
         tool_name=tool_info['name'],
         signature=tool_info['signature'],
         description=tool_info['description'],
-        user_input=user_input
     )

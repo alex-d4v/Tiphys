@@ -9,15 +9,16 @@ EXISTING RELEVANT TASKS:
 {relevant_tasks_str}
 
 Compare these and evaluate if there are any "collisions":
-1. Redundancy: Is the new task already covered by an existing one? (Exact same goal and time)
-2. Conflict: Does the new task contradict or interfere with an existing one? (Same time slot, different goal)
+1. Redundancy: Is the new task already covered by an existing one? (The task exists but with slightly different characteristics)
+2. Conflict: Does the new task contradict or interfere with an existing one? (There is a conflict in the task's goals, timing, or dependencies)
 3. Dependency: Should the new task be a dependency rather than a new separate task?
+4. None: There are no issues, the new task can be added without problems.
 
 Return your analysis in the following JSON format:
 {{
     "collision_exists": bool,
     "collision_type": "<Redundancy|Conflict|Dependency|None>",
-    "justification": "Detailed explanation of why there is or isn't a collision. If a collision exists, explain specifically which tasks are involved. Use task IDs if available.",
+    "justification": "<explanation_of_the_analysis_of_collision_type>",
     "can_proceed": bool
 }}
 

@@ -121,18 +121,19 @@ def generate_tasks_node(state: TaskManagerState, run_llm_func) -> dict:
 def search_node(state: TaskManagerState, run_llm_func, db_ops_search) -> dict:
     """Search for potentially colliding nodes using dynamic tool selection."""
     user_msg = state.get("user_prev_message", "")
-    planned_tasks = state.get("planned_tasks", pd.DataFrame())
-    
-    if planned_tasks.empty:
-        return {"relevant_tasks": pd.DataFrame()}
+    planned_tasks = state.get("planned_tasks", None)
     
     # We want to search for each task in parallel or collectively.
     # We'll pass both user message and planned tasks to the search selection prompt.
-    planned_tasks_str = "\n".join(print_update_message(planned_tasks, verbose=False))
-    search_context = f"User Request: {user_msg}\n\nPlanned Tasks for creation:\n{planned_tasks_str}"
+    if not planned_tasks is None and not planned_tasks.empty:
+        planned_tasks_str = "Planned Tasks for creation:\n" + "\n".join(print_update_message(planned_tasks, verbose=False))
+    else: 
+        planned_tasks_str = ""
+    search_context = f"User Request: {user_msg} \n\n {planned_tasks_str}"
     
     available_tools = db_ops_search.get_available_tools()
     tool_signatures = [f"{t['signature']}: {t['description']}" for t in available_tools]
+    print(f"\nThere are {len(available_tools)} available search tools for finding relevant tasks in the database.\n")
     selection_prompt = select_search_tool_prompt(tool_signatures)
     
     # Pass search context as the prompt
@@ -140,6 +141,8 @@ def search_node(state: TaskManagerState, run_llm_func, db_ops_search) -> dict:
     response_json = parse_general_json_bracketed_string(response)
     selected_tool_names = response_json.get("selected_tools", [])
     justification = response_json.get("justification", "")
+    # which tools ?
+    print(f"\nList of selected tools for searching relevant tasks: {'\n -'.join(selected_tool_names)}\n")
     print(f"🧠 Tool Selection: {justification}")
 
     relevant_tasks = None
@@ -148,10 +151,10 @@ def search_node(state: TaskManagerState, run_llm_func, db_ops_search) -> dict:
         tool_info = next((t for t in available_tools if t['name'] == tool_name), None)
         if not tool_info: continue
         
-        p_prompt = parametrize_tool_prompt(tool_info, search_context)
+        p_prompt = parametrize_tool_prompt(tool_info)
         arg_response = run_llm_func(prompt=search_context, system_prompt=p_prompt)
         arg_json = parse_general_json_bracketed_string(arg_response)
-        
+        # we have the value for the parameters, we can now call the tool function with these parameters
         args = arg_json.get("args", {})
         try:
             tool_func = getattr(db_ops_search, tool_name)
@@ -168,7 +171,6 @@ def search_node(state: TaskManagerState, run_llm_func, db_ops_search) -> dict:
     
     if relevant_tasks is not None and not relevant_tasks.empty:
         relevant_tasks = relevant_tasks.drop_duplicates(subset=['id'], keep='first')
-        print(f"\nTotal unique tasks found that might collide: {len(relevant_tasks)}\n")
         return {"relevant_tasks": relevant_tasks}
     
     print("No potential matches in database.")
@@ -187,6 +189,7 @@ def check_collision_with_existing_tasks(state: TaskManagerState, relevant_tasks:
         return {"can_proceed": True}
     
     # Check collision via LLM
+    print(f"\nTotal unique tasks found that might collide: {len(relevant_tasks)}\n")
     planned_str = "\n".join(print_update_message(planned_tasks, verbose=False))
     relevant_str = "\n".join(print_update_message(relevant_tasks, verbose=False))
     
@@ -197,21 +200,15 @@ def check_collision_with_existing_tasks(state: TaskManagerState, relevant_tasks:
     collision_exists = collision_json.get("collision_exists", False)
     can_proceed = collision_json.get("can_proceed", True)
     justification = collision_json.get("justification", "No justification provided.")
+    print(f"🧠 Collision Check: {justification}")
+
+    if not can_proceed:
+        print("Task creation BLOCKED due to collision.")
+        return {"can_proceed": False, "prev_message": f"Task creation blocked: {justification}"}
+    else:
+        print("Collision noted but proceeding with creation.")
+        return {"can_proceed": True, "prev_message": f"{justification}"}
     
-    if collision_exists:
-        print("\n" + "="*50)
-        print(f"COLLISION ANALYSIS:")
-        print(f"{justification}")
-        print("="*50 + "\n")
-        
-        if not can_proceed:
-            print("Task creation BLOCKED due to collision.")
-            return {"can_proceed": False, "prev_message": f"Task creation blocked: {justification}"}
-        else:
-            print("Collision noted but proceeding with creation.")
-            return {"can_proceed": True, "prev_message": f"Collision Warning: {justification}"}
-    
-    return {"can_proceed": True}
 
 def create_tasks_from_user_input(state: TaskManagerState, run_llm_func, run_llm_embeddings_func, db_ops) -> TaskManagerState:
     can_proceed = state.get("can_proceed", True)
@@ -250,11 +247,10 @@ def create_tasks_from_user_input(state: TaskManagerState, run_llm_func, run_llm_
     # Important : clear planned_tasks to avoid re-adding
     return {"tasks": pd.concat([state["tasks"], today_new_tasks], ignore_index=True), "planned_tasks": pd.DataFrame()}
 
-def update_status_node(state: TaskManagerState , run_llm_func, run_llm_embeddings_func, db_ops, db_ops_search) -> TaskManagerState:
+def update_status_node(state: TaskManagerState , run_llm_func, db_ops, db_ops_search) -> TaskManagerState:
     # Retrieve relevant tasks via vector search
     user_msg = state.get("user_prev_message", "")
-    query_embedding = run_llm_embeddings_func(user_msg)
-    relevant_tasks = db_ops_search.get_relevant_tasks_by_query(query_embedding, top_k=10)
+    relevant_tasks = db_ops_search.get_relevant_tasks_by_query(user_msg, top_k=10)
     
     if relevant_tasks.empty:
         print("No relevant tasks found in Database for update.")
@@ -341,14 +337,13 @@ def comment_tasks_node(state: TaskManagerState, run_llm_func, db_ops_search) -> 
     state["prev_message"] = response
     return state
 
-def delete_tasks_node(state: TaskManagerState , run_llm_func, run_llm_embeddings_func, db_ops, db_ops_search) -> TaskManagerState:
+def delete_tasks_node(state: TaskManagerState , run_llm_func, db_ops, db_ops_search) -> TaskManagerState:
 
     user_msg = state.get("user_prev_message", "")
     print(f"Searching for tasks to delete based on user intent: '{user_msg}'...")
     
     # 1. Global search via embeddings to find deletion candidates (retrieve top 10)
-    query_embedding = run_llm_embeddings_func(user_msg)
-    relevant_tasks = db_ops_search.get_relevant_tasks_by_query(query_embedding, top_k=10)
+    relevant_tasks = db_ops_search.get_relevant_tasks_by_query(user_msg, top_k=10)
     
     if relevant_tasks.empty:
         print("No relevant tasks found in database for deletion.")
@@ -410,8 +405,8 @@ def create_workflow(run_llm_func, run_llm_embeddings_func, db_ops , db_ops_searc
     workflow.add_node("check_collision", lambda state: check_collision_with_existing_tasks(state, state.get("relevant_tasks", pd.DataFrame()), run_llm_func))
     workflow.add_node("create_tasks", lambda state: create_tasks_from_user_input(state, run_llm_func, run_llm_embeddings_func, db_ops))
 
-    workflow.add_node("update_status", lambda state: update_status_node(state, run_llm_func, run_llm_embeddings_func, db_ops, db_ops_search))
-    workflow.add_node("delete_tasks", lambda state: delete_tasks_node(state, run_llm_func, run_llm_embeddings_func, db_ops , db_ops_search))
+    workflow.add_node("update_status", lambda state: update_status_node(state, run_llm_func, db_ops, db_ops_search))
+    workflow.add_node("delete_tasks", lambda state: delete_tasks_node(state, run_llm_func, db_ops, db_ops_search))
     workflow.add_node("comment_tasks", lambda state: comment_tasks_node(state, run_llm_func, db_ops_search))
     workflow.add_node("list_tasks", lambda state: list_tasks_node(state, db_ops))
     workflow.add_node("exit", exit_node)
