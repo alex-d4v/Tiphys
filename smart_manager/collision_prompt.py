@@ -20,7 +20,6 @@ Return your analysis in the following JSON format:
     "justification": "Detailed explanation of why there is or isn't a collision. If a collision exists, explain specifically which tasks are involved. Use task IDs if available.",
     "can_proceed": bool
 }}
-"""
 
 Only and only iff the collision_type is "Redundancy" , flag can_proceed as false , otherwise , flag can_proceed as true.
 """
