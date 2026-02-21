@@ -405,7 +405,7 @@ def create_workflow(run_llm_func, run_llm_embeddings_func, db_ops , db_ops_searc
     workflow.add_node("initial", lambda state: initial_node(state , run_llm_func))
     workflow.add_node("menu", lambda state: print_menu_node(state, run_llm_func))
     # Task creation flow
-    workflow.add_node("generate_tasks", lambda state: generate_tasks_node(state, run_llm_func, run_llm_embeddings_func, db_ops, db_ops_search))
+    workflow.add_node("generate_tasks", lambda state: generate_tasks_node(state, run_llm_func))
     workflow.add_node("search", lambda state: search_node(state, run_llm_func, db_ops_search))
     workflow.add_node("check_collision", lambda state: check_collision_with_existing_tasks(state, state.get("relevant_tasks", pd.DataFrame()), run_llm_func))
     workflow.add_node("create_tasks", lambda state: create_tasks_from_user_input(state, run_llm_func, run_llm_embeddings_func, db_ops))
