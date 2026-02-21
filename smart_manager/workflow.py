@@ -6,7 +6,7 @@ from langgraph.graph import StateGraph, END
 
 # SIMPLE HARDCODED FUNCTIONS TO HANDLE TASKS AND INTERACTIONS , THE REAL LOGIC IS IN THE PROMPTS AND THE LLM RESPONSES
 # handle_task contains functions to update task status and delete tasks based on user input and LLM responses
-from manager.handle_task import delete_task_by_id, update_task_status
+from manager.handle_task import update_task_status
 # SMART MANAGER
 # prompts to generate tasks , select tasks and change their status
 from smart_manager.task_gen_prompt import (create_task_prompt, delete_task_prompt, 
@@ -16,7 +16,7 @@ from smart_manager.general_prompts import (create_general_message_prompt,
                                            create_welcome_prompt,
                                            create_comment_tasks_prompt)
 # prompt for tool selection
-from smart_manager.tool_selection_prompt import select_action_prompt
+from smart_manager.tool_selection_prompt import select_action_prompt , select_search_tool_prompt , parametrize_tool_prompt
 from smart_manager.collision_prompt import collision_check_prompt
 
 from utils.parse_utils import input_task, parse_action_string, parse_general_json_bracketed_string, unpack_tasks
@@ -27,9 +27,12 @@ class TaskManagerState(TypedDict):
     tasks: pd.DataFrame
     current_action: str
     exit_requested: bool
-    prev_message : str | None
+    prev_message : Annotated[str | None, lambda old, new: new]
     user_prev_message : str | None
-    auto_func : bool = True
+    auto_func : bool 
+    relevant_tasks: Annotated[pd.DataFrame, lambda old, new: pd.concat([old, new], ignore_index=True) if old is not None and new is not None else (new if new is not None else old)]
+    planned_tasks: Annotated[pd.DataFrame | None, lambda old, new: new]
+    can_proceed: bool
 
 def initial_node(state: TaskManagerState , run_llm_func) -> TaskManagerState:
     # we just invoke the llm to get a welcome message or initial tasks if needed
@@ -78,95 +81,174 @@ def print_menu_node(state: TaskManagerState , run_llm_func) -> TaskManagerState:
 
     return {"current_action": action , "prev_message" : prev_message, "user_prev_message": user_msg, "auto_func": auto_func}
 
-def router(state: TaskManagerState , run_llm_func) -> Literal["generate_tasks", "update_status", "list_tasks", "exit", "menu", "comment_tasks"]:
+def router(state: TaskManagerState, run_llm_func) -> Literal["generate_tasks", "update_status", "list_tasks", "delete_tasks", "comment_tasks", "exit", "menu"]:
     action = state.get("current_action", "")
-    if action == 'generate_tasks':
-        return "generate_tasks"
-    elif action == 'update_status':
-        return "update_status"
-    elif action == 'list_tasks':
-        return "list_tasks"
-    elif action == 'delete_tasks':
-        return "delete_tasks"
-    elif action == 'comment_tasks':
-        return "comment_tasks"
-    elif action == 'exit':
-        return "exit"
-    elif action == 'menu':
-        return "menu"
+    
+    valid_actions = ['generate_tasks', 'update_status', 'list_tasks', 'delete_tasks', 'comment_tasks', 'exit', 'menu']
+    
+    if action in valid_actions:
+        return action
     else:
+        # General message handling
         print("="*50)
-        response = run_llm_func(prompt=state.get("user_prev_message", "No previous message."), 
-                                system_prompt=create_general_message_prompt(prev_message=state.get("prev_message", ""))
-                                )
+        response = run_llm_func(
+            prompt=state.get("user_prev_message", "No previous message."),
+            system_prompt=create_general_message_prompt(prev_message=state.get("prev_message", ""))
+        )
         print(f"\n\n{response}\n\n")
         print("="*50)
+        # Update state with response - this fixes the repeated messages
+        state["prev_message"] = response
         return "menu"
 
-def generate_tasks_node(state: TaskManagerState, run_llm_func, run_llm_embeddings_func, db_ops, db_ops_search) -> TaskManagerState:
-
-    user_msg = state.get("user_prev_message", None)
-    task_desc = ""
+def generate_tasks_node(state: TaskManagerState, run_llm_func) -> dict:
+    user_msg = state.get("user_prev_message", "")
     if not user_msg:
-        task_desc = input_task()
-        if not task_desc:
-            print("No valid task entered.")
-            return {"tasks": state["tasks"]}
-    else:
-        task_desc = user_msg
+        print("No valid task entered.")
+        return {"planned_tasks": pd.DataFrame()}
 
-    # Collision Check Step (Intermediate step)
-    # Embed the query
-    query_embedding = run_llm_embeddings_func(task_desc)
-    # Retrieve relevant tasks from DB
-    relevant_tasks = db_ops_search.get_relevant_tasks_by_query(query_embedding, top_k=10)
-    
-    if not relevant_tasks.empty:
-        # Check collision via LLM
-        relevant_str = "\n".join(print_update_message(relevant_tasks, verbose=False))
-        collision_prompt = collision_check_prompt(task_desc, relevant_str)
-        collision_response = run_llm_func(prompt=collision_prompt, system_prompt="You are a meticulous task reviewer.")
-        collision_json = parse_general_json_bracketed_string(collision_response)
-        
-        if collision_json.get("collision_exists", False):
-            print("\n" + "="*50)
-            print(f"{collision_json.get('justification', 'No justification provided.')}")
-            print("="*50 + "\n")
-            if not collision_json.get("can_proceed", False):
-                return {"tasks": state["tasks"]}
-    
     # Generate tasks
-    response = run_llm_func(prompt=task_desc, system_prompt=create_task_prompt())
-    
+    response = run_llm_func(prompt=user_msg, system_prompt=create_task_prompt())
     temp_tasks = unpack_tasks(response)
+    
     if not temp_tasks:
-        print("No tasks unpacked. Check response format.")
+        print("No tasks generated. Check response format.")
+        return {"planned_tasks": pd.DataFrame()}
+    
+    planned_df = pd.DataFrame(temp_tasks)
+    return {"planned_tasks": planned_df}
+
+def search_node(state: TaskManagerState, run_llm_func, db_ops_search) -> dict:
+    """Search for potentially colliding nodes using dynamic tool selection."""
+    user_msg = state.get("user_prev_message", "")
+    planned_tasks = state.get("planned_tasks", pd.DataFrame())
+    
+    if planned_tasks.empty:
+        return {"relevant_tasks": pd.DataFrame()}
+    
+    # We want to search for each task in parallel or collectively.
+    # We'll pass both user message and planned tasks to the search selection prompt.
+    planned_tasks_str = "\n".join(print_update_message(planned_tasks, verbose=False))
+    search_context = f"User Request: {user_msg}\n\nPlanned Tasks for creation:\n{planned_tasks_str}"
+    
+    available_tools = db_ops_search.get_available_tools()
+    tool_signatures = [f"{t['signature']}: {t['description']}" for t in available_tools]
+    selection_prompt = select_search_tool_prompt(tool_signatures)
+    
+    # Pass search context as the prompt
+    response = run_llm_func(prompt=search_context, system_prompt=selection_prompt)
+    response_json = parse_general_json_bracketed_string(response)
+    selected_tool_names = response_json.get("selected_tools", [])
+    justification = response_json.get("justification", "")
+    print(f"🧠 Tool Selection: {justification}")
+
+    relevant_tasks = None
+    
+    for tool_name in selected_tool_names:
+        tool_info = next((t for t in available_tools if t['name'] == tool_name), None)
+        if not tool_info: continue
+        
+        p_prompt = parametrize_tool_prompt(tool_info, search_context)
+        arg_response = run_llm_func(prompt=search_context, system_prompt=p_prompt)
+        arg_json = parse_general_json_bracketed_string(arg_response)
+        
+        args = arg_json.get("args", {})
+        try:
+            tool_func = getattr(db_ops_search, tool_name)
+            result = tool_func(**args)
+            
+            if isinstance(result, pd.DataFrame) and not result.empty:
+                if relevant_tasks is None:
+                    relevant_tasks = result
+                else:
+                    relevant_tasks = pd.concat([relevant_tasks, result], ignore_index=True)
+                print(f"Tool '{tool_name}' found {len(result)} tasks")
+        except Exception as e:
+            print(f"Error executing tool '{tool_name}': {e}")
+    
+    if relevant_tasks is not None and not relevant_tasks.empty:
+        relevant_tasks = relevant_tasks.drop_duplicates(subset=['id'], keep='first')
+        print(f"\nTotal unique tasks found that might collide: {len(relevant_tasks)}\n")
+        return {"relevant_tasks": relevant_tasks}
+    
+    print("No potential matches in database.")
+    return {"relevant_tasks": pd.DataFrame()}
+
+def check_collision_with_existing_tasks(state: TaskManagerState, relevant_tasks: pd.DataFrame, run_llm_func) -> dict:
+    """Check if new task collides with existing tasks."""
+    user_msg = state.get("user_prev_message", "")
+    planned_tasks = state.get("planned_tasks", pd.DataFrame())
+    
+    if planned_tasks.empty:
+        return {"can_proceed": True}
+    
+    if relevant_tasks is None or relevant_tasks.empty:
+        print("No existing tasks identified as potentially colliding. Proceeding with creation.")
+        return {"can_proceed": True}
+    
+    # Check collision via LLM
+    planned_str = "\n".join(print_update_message(planned_tasks, verbose=False))
+    relevant_str = "\n".join(print_update_message(relevant_tasks, verbose=False))
+    
+    collision_prompt_str = collision_check_prompt(planned_str, relevant_str)
+    collision_response = run_llm_func(prompt=user_msg, system_prompt=collision_prompt_str)
+    collision_json = parse_general_json_bracketed_string(collision_response)
+    
+    collision_exists = collision_json.get("collision_exists", False)
+    can_proceed = collision_json.get("can_proceed", True)
+    justification = collision_json.get("justification", "No justification provided.")
+    
+    if collision_exists:
+        print("\n" + "="*50)
+        print(f"COLLISION ANALYSIS:")
+        print(f"{justification}")
+        print("="*50 + "\n")
+        
+        if not can_proceed:
+            print("Task creation BLOCKED due to collision.")
+            return {"can_proceed": False, "prev_message": f"Task creation blocked: {justification}"}
+        else:
+            print("Collision noted but proceeding with creation.")
+            return {"can_proceed": True, "prev_message": f"Collision Warning: {justification}"}
+    
+    return {"can_proceed": True}
+
+def create_tasks_from_user_input(state: TaskManagerState, run_llm_func, run_llm_embeddings_func, db_ops) -> TaskManagerState:
+    can_proceed = state.get("can_proceed", True)
+    planned_tasks = state.get("planned_tasks", pd.DataFrame())
+    
+    if not can_proceed:
+        # Prev message should already contain the justification
+        return {"tasks": state["tasks"], "planned_tasks": pd.DataFrame()}
+
+    if planned_tasks.empty:
+        print("No tasks were planned for creation.")
         return {"tasks": state["tasks"]}
     
     # Store to DB
-    new_tasks_df = pd.DataFrame(temp_tasks)
-    db_ops.store_tasks(new_tasks_df, embeddings_func=run_llm_embeddings_func)
+    db_ops.store_tasks(planned_tasks, embeddings_func=run_llm_embeddings_func)
     
     print("="*50)
-    print(f"\n\nAdding {len(temp_tasks)} tasks to Database\n\n")
-    print_update_message(new_tasks_df)# print the new tasks in a nice format for the user to see what was added
+    print(f"\n\nSuccessfully added {len(planned_tasks)} tasks to Database\n\n")
+    print_update_message(planned_tasks)
     print("="*50)
     
     # Update operating DF (only today's tasks)
     import datetime
     today = datetime.date.today().isoformat()
-    today_new_tasks = new_tasks_df[new_tasks_df["date"] == today]
+    today_new_tasks = planned_tasks[planned_tasks["date"] == today]
     
     user_corpus = f"""
-        User : I have just added some tasks with the follwing description :
-        {print_update_message(new_tasks_df, verbose=False)}
+        User : I have just added {len(planned_tasks)} Tasks.
+        Tasks detail :
+        {print_update_message(planned_tasks, verbose=False)}
     """
-    general_message = run_llm_func(prompt=user_corpus, 
-                                   system_prompt=create_general_message_prompt())
+    general_message = run_llm_func(prompt=user_corpus, system_prompt=create_general_message_prompt())
 
     print(f"\n\n{general_message}\n\n")
 
-    return {"tasks": pd.concat([state["tasks"], today_new_tasks], ignore_index=True)}
+    # Important : clear planned_tasks to avoid re-adding
+    return {"tasks": pd.concat([state["tasks"], today_new_tasks], ignore_index=True), "planned_tasks": pd.DataFrame()}
 
 def update_status_node(state: TaskManagerState , run_llm_func, run_llm_embeddings_func, db_ops, db_ops_search) -> TaskManagerState:
     # Retrieve relevant tasks via vector search
@@ -322,7 +404,12 @@ def create_workflow(run_llm_func, run_llm_embeddings_func, db_ops , db_ops_searc
     # Add nodes
     workflow.add_node("initial", lambda state: initial_node(state , run_llm_func))
     workflow.add_node("menu", lambda state: print_menu_node(state, run_llm_func))
+    # Task creation flow
     workflow.add_node("generate_tasks", lambda state: generate_tasks_node(state, run_llm_func, run_llm_embeddings_func, db_ops, db_ops_search))
+    workflow.add_node("search", lambda state: search_node(state, run_llm_func, db_ops_search))
+    workflow.add_node("check_collision", lambda state: check_collision_with_existing_tasks(state, state.get("relevant_tasks", pd.DataFrame()), run_llm_func))
+    workflow.add_node("create_tasks", lambda state: create_tasks_from_user_input(state, run_llm_func, run_llm_embeddings_func, db_ops))
+
     workflow.add_node("update_status", lambda state: update_status_node(state, run_llm_func, run_llm_embeddings_func, db_ops, db_ops_search))
     workflow.add_node("delete_tasks", lambda state: delete_tasks_node(state, run_llm_func, run_llm_embeddings_func, db_ops , db_ops_search))
     workflow.add_node("comment_tasks", lambda state: comment_tasks_node(state, run_llm_func, db_ops_search))
@@ -349,7 +436,20 @@ def create_workflow(run_llm_func, run_llm_embeddings_func, db_ops , db_ops_searc
 
     # Back to menu after actions
     workflow.add_edge("initial", "comment_tasks")
-    workflow.add_edge("generate_tasks", "menu")
+
+    # workflow on generating tasks
+    workflow.add_edge("generate_tasks", "search")
+    workflow.add_edge("search", "check_collision")
+    workflow.add_conditional_edges(
+        "check_collision",
+        lambda state: "create_tasks" if state.get("can_proceed", True) else "menu",
+        {
+            "create_tasks": "create_tasks",
+            "menu": "menu"
+        }
+    )
+
+    workflow.add_edge("create_tasks", "menu")
     workflow.add_edge("update_status", "menu")
     workflow.add_edge("list_tasks", "menu")
     workflow.add_edge("delete_tasks", "menu")

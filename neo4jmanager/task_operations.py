@@ -97,7 +97,8 @@ class TaskOperations:
                 MATCH (t:Task)
                 WHERE $status IS NULL OR t.status = $status
                 OPTIONAL MATCH (t)-[:DEPENDS_ON]->(d:Task)
-                WITH t, collect(d.id) as dependencies
+                OPTIONAL MATCH (future:Task)-[:DEPENDS_ON]->(t)
+                WITH t, collect(DISTINCT d.id) as dependencies, collect(DISTINCT future.id) as blocked_tasks
                 RETURN t.id as id,
                        t.description as description,
                        t.date as date,
@@ -106,7 +107,8 @@ class TaskOperations:
                        t.status as status,
                        t.started_at as started_at,
                        t.ended_at as ended_at,
-                       dependencies
+                       dependencies,
+                       blocked_tasks
                 ORDER BY t.date, t.time
             """
             
@@ -117,7 +119,7 @@ class TaskOperations:
             records = [dict(record) for record in result]
             
             # Ensure we return a DataFrame with expected columns even if empty
-            cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies"]
+            cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies", "blocked_tasks"]
             return pd.DataFrame(records, columns=cols) if records else pd.DataFrame(columns=cols)
     
     def get_task_by_id(self, task_id: str) -> Optional[Dict[str, Any]]:
@@ -126,7 +128,8 @@ class TaskOperations:
             result = session.run("""
                 MATCH (t:Task {id: $task_id})
                 OPTIONAL MATCH (t)-[:DEPENDS_ON]->(d:Task)
-                WITH t, collect(d.id) as dependencies
+                OPTIONAL MATCH (future:Task)-[:DEPENDS_ON]->(t)
+                WITH t, collect(DISTINCT d.id) as dependencies, collect(DISTINCT future.id) as blocked_tasks
                 RETURN t.id as id,
                        t.description as description,
                        t.date as date,
@@ -135,7 +138,8 @@ class TaskOperations:
                        t.status as status,
                        t.started_at as started_at,
                        t.ended_at as ended_at,
-                       dependencies
+                       dependencies,
+                       blocked_tasks
             """, task_id=task_id)
             
             record = result.single()
@@ -163,7 +167,7 @@ class TaskOperations:
                     t.started_at as started_at,
                     t.ended_at as ended_at,
                     dependencies,
-                    blocked_tasks  -- Tasks waiting on this one
+                    blocked_tasks
                 ORDER BY t.time
             """, today=today)
             
@@ -373,6 +377,8 @@ class TaskOperations:
             f"Description: {task['description']}",
             f"Date: {task['date']}",
             f"Priority: {task.get('priority', 'medium')}",
-            f"Status: {task.get('status', 'pending')}"
+            f"Status: {task.get('status', 'pending')}",
+            f"Dependencies: {task.get('dependencies', [])}",
+            f"Blocked Tasks: {task.get('blocked_tasks', [])}"
         ]
         return " | ".join(parts)

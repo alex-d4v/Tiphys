@@ -10,10 +10,17 @@ from smart_manager.workflow import create_workflow
 from neo4jmanager.manager import Neo4jManager
 from neo4jmanager.task_operations import TaskOperations
 
-# let's configure the logger to be more verbose for better debugging
+# configure logging - set to WARNING to hide internal DB and connection logs
 import logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+# Keep our main logger at INFO if you want to see standard app messages
+logger.setLevel(logging.INFO)
+
+# Suppress verbose third-party logs
+logging.getLogger("neo4j").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
 
 # ── Ollama config ──────────────────────────────────────────────────────────────
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
@@ -66,7 +73,7 @@ def main():
     db_manager = Neo4jManager()
     db_manager.initialize_schema()
     db_ops = TaskOperations(db_manager)
-    db_ops_search = TaskSearchOperations(db_manager)  # Separate instance for search operations
+    db_ops_search = TaskSearchOperations(db_manager, embeddings_func=run_llm_embeddings)  # Pass embeddings func to search operations
 
     # Initial state - Only today's tasks for the operating DF
     tasks = db_ops.get_today_tasks()
@@ -82,7 +89,9 @@ def main():
         "exit_requested": False,
         "prev_message": None,
         "user_prev_message": None,
-        "auto_func": True
+        "auto_func": True,
+        "relevant_tasks": pd.DataFrame(),
+        "can_proceed": True
     }
 
     try:

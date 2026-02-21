@@ -29,3 +29,60 @@ Your task is to match user input to one of the following actions based on the co
 
 def select_action_prompt():
     return SELECT_ACTION_PROMPT
+
+SELECT_SEARCH_TOOL_PROMPT = """
+Today is : {today}.
+
+You are a helpful assistant designed to help users manage their tasks and goals effectively.
+The user has provided an input that requires you to search for relevant tasks using a set of tool .
+Your task is to classify the user's input into one of the following search tools based on the content of the message and the user's intent:
+
+The available search tools are:
+{signatures}
+
+## Output Format
+```json
+{{
+    "selected_tools": [<tool_function_name> , ...],
+    "justification": "The user's input contains a specific date, indicating that they want to search for tasks related to that date."
+}}
+```
+
+## Response Factor:
+- The `selected_tools` field should contain a list of `tool_function_name` strings from the available search tools above.
+- The `justification` field should provide a brief explanation of why the selected tools were chosen based on the user's input.
+- This is a multiclass classification task . It is probable that more than one tool is suitable to use based on the user's input .
+- Only provide the JSON output as specified, no other text.
+"""
+
+def select_search_tool_prompt(signatures):
+    today = dt.datetime.now().strftime("%A, %B %d, %Y %H:%M:%S")
+    return SELECT_SEARCH_TOOL_PROMPT.format(today=today, signatures="\n".join(signatures))
+
+PARAMETRIZE_TOOL = """
+Today is : {today}.
+You are a task management expert. Your job is to extract parameters for a search tool from the user's input.
+
+TOOL INFORMATION:
+Name: {tool_name}
+Signature: {signature}
+Description: {description}
+
+USER MESSAGE:
+{user_input}
+
+## Instructions:
+1. Extract values for the parameters listed in the signature.
+2. Return the parameters in a JSON object with a 'args' key.
+3. If a parameter is a string, provide a string. Dates should be YYYY-MM-DD.
+"""
+
+def parametrize_tool_prompt(tool_info, user_input):
+    today = dt.datetime.now().strftime("%A, %B %d, %Y %H:%M:%S")
+    return PARAMETRIZE_TOOL.format(
+        today=today,
+        tool_name=tool_info['name'],
+        signature=tool_info['signature'],
+        description=tool_info['description'],
+        user_input=user_input
+    )

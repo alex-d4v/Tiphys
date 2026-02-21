@@ -41,7 +41,7 @@ class Neo4jManager:
             # Test connection
             with self.driver.session() as session:
                 session.run("RETURN 1")
-            print(f"✓ Connected to Neo4j at {self.uri}")
+            # print(f"✓ Connected to Neo4j at {self.uri}")
         except Exception as e:
             print(f"✗ Failed to connect to Neo4j: {e}")
             raise

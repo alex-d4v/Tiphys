@@ -18,8 +18,27 @@ class TaskSearchOperations:
     - get_relevant_tasks_by_query: Vector similarity search.
     """
     
-    def __init__(self, db_manager: Neo4jManager):
+    def __init__(self, db_manager: Neo4jManager, embeddings_func=None):
         self.db = db_manager
+        self.embeddings_func = embeddings_func
+
+    def get_available_tools(self) -> List[Dict[str, str]]:
+        """Returns a list of tools with their signatures and documentation."""
+        tools = []
+        import inspect
+        for method_name in dir(self):
+            if method_name.startswith("get_") and method_name != "get_relevant_tasks_by_query" and callable(getattr(self, method_name)):
+                method = getattr(self, method_name)
+                signature = str(inspect.signature(method))
+                # Remove self from signature if present
+                signature = signature.replace("(self, ", "(").replace("(self)", "()")
+                
+                tools.append({
+                    "name": method_name,
+                    "signature": f"{method_name}{signature}",
+                    "description": (method.__doc__ or "No description.").strip()
+                })
+        return tools
     
     def get_task_by_id(self, task_id: str) -> Optional[Dict[str, Any]]:
         """Get a single task by ID."""
@@ -44,25 +63,28 @@ class TaskSearchOperations:
             record = result.single()
             return dict(record) if record else None
 
-    def get_tasks_by_time_range(self, start_date: str, end_date: str, start_time: str = "00:00", end_time: str = "23:59", limit: int = 10) -> pd.DataFrame:
+    def get_tasks_by_time_range(self, start_date: str, end_date: str, start_time: str = None, end_time: str = None, limit: int = 10) -> pd.DataFrame:
         """
         Get tasks within a given date/time range.
         
         Args:
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
-            start_time: Start time (HH:MM), defaults to "00:00"
-            end_time: End time (HH:MM), defaults to "23:59"
+            start_time: Optional start time (HH:MM). If None, searches from start of day.
+            end_time: Optional end time (HH:MM). If None, searches until end of day.
             limit: Maximum number of results
         
         Returns:
             DataFrame of tasks in the time range
         """
+        s_time = start_time or "00:00"
+        e_time = end_time or "23:59"
+        
         with self.db.driver.session() as session:
             query = """
                 MATCH (t:Task)
-                WHERE (t.date > $start_date OR (t.date = $start_date AND t.time >= $start_time))
-                  AND (t.date < $end_date OR (t.date = $end_date AND t.time <= $end_time))
+                WHERE (t.date > $start_date OR (t.date = $start_date AND (t.time >= $start_time OR t.time IS NULL)))
+                  AND (t.date < $end_date OR (t.date = $end_date AND (t.time <= $end_time OR t.time IS NULL)))
                 OPTIONAL MATCH (t)-[:DEPENDS_ON]->(d:Task)
                 OPTIONAL MATCH (future:Task)-[:DEPENDS_ON]->(t)
                 WITH t, collect(DISTINCT d.id) as dependencies, collect(DISTINCT future.id) as blocked_tasks
@@ -79,7 +101,7 @@ class TaskSearchOperations:
                 ORDER BY t.date, t.time
                 LIMIT $limit
             """
-            result = session.run(query, start_date=start_date, start_time=start_time, end_date=end_date, end_time=end_time, limit=limit)
+            result = session.run(query, start_date=start_date, start_time=s_time, end_date=end_date, end_time=e_time, limit=limit)
             records = [dict(record) for record in result]
             cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies", "blocked_tasks"]
             return pd.DataFrame(records, columns=cols) if records else pd.DataFrame(columns=cols)
@@ -166,3 +188,19 @@ class TaskSearchOperations:
                 print("Falling back to text-based search...")
                 cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies", "blocked_tasks", "score"]
                 return pd.DataFrame(columns=cols)
+
+    def get_relevant_tasks_by_text(self, query: str, top_k: int = 5) -> pd.DataFrame:
+        """
+        Find tasks similar to a text query using vector similarity search.
+        
+        Args:
+            query: Text string to search for
+            top_k: Number of most similar tasks to return
+        """
+        if not self.embeddings_func:
+            print("Embeddings function not provided. Cannot perform vector search.")
+            cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies", "blocked_tasks", "score"]
+            return pd.DataFrame(columns=cols)
+            
+        embedding = self.embeddings_func(query)
+        return self.get_relevant_tasks_by_query(embedding, top_k=top_k)
