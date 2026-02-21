@@ -30,9 +30,10 @@ If a task is broken down into subtasks , make sure to include the dependencies b
 ## Output Rules
 - The output must be in the specified JSON format .
 - Each task must have a unique id .
+- The title should be a concise summary of the task .
+- The description should be rich and detailed .
 - The priority field should reflect the importance and urgency of the task (high, medium, low).
-- The description should be concise and clear .
-- The date and time should be in the specified format .
+- The date and time should ALWAYS be provided for each task , even if the user doesn't specify a specific time instance . (You are given the current date and time)
 - If a task has dependencies , list the ids of the tasks it depends on in the dependencies field .
 - If a task has no dependencies , the dependencies field should be an empty list .
 """

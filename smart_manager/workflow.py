@@ -103,7 +103,7 @@ def router(state: TaskManagerState , run_llm_func) -> Literal["generate_tasks", 
         print("="*50)
         return "menu"
 
-def generate_tasks_node(state: TaskManagerState, run_llm_func, run_llm_embeddings_func, db_ops):
+def generate_tasks_node(state: TaskManagerState, run_llm_func, run_llm_embeddings_func, db_ops, db_ops_search) -> TaskManagerState:
 
     user_msg = state.get("user_prev_message", None)
     task_desc = ""
@@ -119,7 +119,7 @@ def generate_tasks_node(state: TaskManagerState, run_llm_func, run_llm_embedding
     # Embed the query
     query_embedding = run_llm_embeddings_func(task_desc)
     # Retrieve relevant tasks from DB
-    relevant_tasks = db_ops.get_relevant_tasks_by_query(query_embedding, top_k=10)
+    relevant_tasks = db_ops_search.get_relevant_tasks_by_query(query_embedding, top_k=10)
     
     if not relevant_tasks.empty:
         # Check collision via LLM
@@ -168,11 +168,11 @@ def generate_tasks_node(state: TaskManagerState, run_llm_func, run_llm_embedding
 
     return {"tasks": pd.concat([state["tasks"], today_new_tasks], ignore_index=True)}
 
-def update_status_node(state: TaskManagerState , run_llm_func, run_llm_embeddings_func, db_ops):
+def update_status_node(state: TaskManagerState , run_llm_func, run_llm_embeddings_func, db_ops, db_ops_search) -> TaskManagerState:
     # Retrieve relevant tasks via vector search
     user_msg = state.get("user_prev_message", "")
     query_embedding = run_llm_embeddings_func(user_msg)
-    relevant_tasks = db_ops.get_relevant_tasks_by_query(query_embedding, top_k=10)
+    relevant_tasks = db_ops_search.get_relevant_tasks_by_query(query_embedding, top_k=10)
     
     if relevant_tasks.empty:
         print("No relevant tasks found in Database for update.")
@@ -228,7 +228,7 @@ def update_status_node(state: TaskManagerState , run_llm_func, run_llm_embedding
     state["tasks"] = df
     return state
 
-def comment_tasks_node(state: TaskManagerState, run_llm_func, db_ops) -> TaskManagerState:
+def comment_tasks_node(state: TaskManagerState, run_llm_func, db_ops_search) -> TaskManagerState:
     # Radius of 12h
     now = datetime.datetime.now()
     start_dt = now - datetime.timedelta(hours=12)
@@ -239,7 +239,7 @@ def comment_tasks_node(state: TaskManagerState, run_llm_func, db_ops) -> TaskMan
     end_date = end_dt.date().isoformat()
     end_time = end_dt.time().strftime("%H:%M")
     
-    recent_tasks = db_ops.get_tasks_by_time_range(start_date, start_time, end_date, end_time, limit=10)
+    recent_tasks = db_ops_search.get_tasks_by_time_range(start_date, end_date,start_time, end_time, limit=10)
     
     if recent_tasks.empty:
         print("No tasks found in the last/next 1h range.")
@@ -259,14 +259,14 @@ def comment_tasks_node(state: TaskManagerState, run_llm_func, db_ops) -> TaskMan
     state["prev_message"] = response
     return state
 
-def delete_tasks_node(state: TaskManagerState , run_llm_func, run_llm_embeddings_func, db_ops) -> TaskManagerState:
+def delete_tasks_node(state: TaskManagerState , run_llm_func, run_llm_embeddings_func, db_ops, db_ops_search) -> TaskManagerState:
 
     user_msg = state.get("user_prev_message", "")
     print(f"Searching for tasks to delete based on user intent: '{user_msg}'...")
     
     # 1. Global search via embeddings to find deletion candidates (retrieve top 10)
     query_embedding = run_llm_embeddings_func(user_msg)
-    relevant_tasks = db_ops.get_relevant_tasks_by_query(query_embedding, top_k=10)
+    relevant_tasks = db_ops_search.get_relevant_tasks_by_query(query_embedding, top_k=10)
     
     if relevant_tasks.empty:
         print("No relevant tasks found in database for deletion.")
@@ -316,16 +316,16 @@ def delete_tasks_node(state: TaskManagerState , run_llm_func, run_llm_embeddings
 def exit_node(state: TaskManagerState):
     return {"exit_requested": True}
 
-def create_workflow(run_llm_func, run_llm_embeddings_func, db_ops):
+def create_workflow(run_llm_func, run_llm_embeddings_func, db_ops , db_ops_search=None):
     workflow = StateGraph(TaskManagerState)
 
     # Add nodes
     workflow.add_node("initial", lambda state: initial_node(state , run_llm_func))
     workflow.add_node("menu", lambda state: print_menu_node(state, run_llm_func))
-    workflow.add_node("generate_tasks", lambda state: generate_tasks_node(state, run_llm_func, run_llm_embeddings_func, db_ops))
-    workflow.add_node("update_status", lambda state: update_status_node(state, run_llm_func, run_llm_embeddings_func, db_ops))
-    workflow.add_node("delete_tasks", lambda state: delete_tasks_node(state, run_llm_func, run_llm_embeddings_func, db_ops))
-    workflow.add_node("comment_tasks", lambda state: comment_tasks_node(state, run_llm_func, db_ops))
+    workflow.add_node("generate_tasks", lambda state: generate_tasks_node(state, run_llm_func, run_llm_embeddings_func, db_ops, db_ops_search))
+    workflow.add_node("update_status", lambda state: update_status_node(state, run_llm_func, run_llm_embeddings_func, db_ops, db_ops_search))
+    workflow.add_node("delete_tasks", lambda state: delete_tasks_node(state, run_llm_func, run_llm_embeddings_func, db_ops , db_ops_search))
+    workflow.add_node("comment_tasks", lambda state: comment_tasks_node(state, run_llm_func, db_ops_search))
     workflow.add_node("list_tasks", lambda state: list_tasks_node(state, db_ops))
     workflow.add_node("exit", exit_node)
 

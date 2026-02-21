@@ -81,7 +81,6 @@ class TaskOperations:
             return created_count
     
     # ── READ ──────────────────────────────────────────────────────────────────
-    
     def get_tasks(self, status: Optional[str] = None, limit: Optional[int] = None) -> pd.DataFrame:
         """
         Retrieve all tasks, optionally filtered by status.
@@ -141,61 +140,35 @@ class TaskOperations:
             
             record = result.single()
             return dict(record) if record else None
-
-    def get_tasks_by_time_range(self, start_date: str, start_time: str, end_date: str, end_time: str, limit: int = 10) -> pd.DataFrame:
-        """
-        Get tasks within a given date/time range.
-        Note: Simple string comparison for Cypher.
-        """
-        with self.db.driver.session() as session:
-            # Match tasks where (date > start_date OR (date == start_date AND time >= start_time))
-            # AND (date < end_date OR (date == end_date AND time <= end_time))
-            query = """
-                MATCH (t:Task)
-                WHERE (t.date > $start_date OR (t.date = $start_date AND t.time >= $start_time))
-                  AND (t.date < $end_date OR (t.date = $end_date AND t.time <= $end_time))
-                OPTIONAL MATCH (t)-[:DEPENDS_ON]->(d:Task)
-                WITH t, collect(d.id) as dependencies
-                RETURN t.id as id,
-                       t.description as description,
-                       t.date as date,
-                       t.time as time,
-                       t.priority as priority,
-                       t.status as status,
-                       t.started_at as started_at,
-                       t.ended_at as ended_at,
-                       dependencies
-                ORDER BY t.date, t.time
-                LIMIT $limit
-            """
-            result = session.run(query, start_date=start_date, start_time=start_time, end_date=end_date, end_time=end_time, limit=limit)
-            records = [dict(record) for record in result]
-            cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies"]
-            return pd.DataFrame(records, columns=cols) if records else pd.DataFrame(columns=cols)
             
     def get_today_tasks(self) -> pd.DataFrame:
         """Get all tasks for today (or with today's date)."""
         import datetime
         today = datetime.date.today().isoformat()
         with self.db.driver.session() as session:
+            
             result = session.run("""
                 MATCH (t:Task {date: $today})
-                OPTIONAL MATCH (t)-[:DEPENDS_ON]->(d:Task)
-                WITH t, collect(d.id) as dependencies
+                OPTIONAL MATCH (t)-[:DEPENDS_ON]->(past:Task)
+                OPTIONAL MATCH (future:Task)-[:DEPENDS_ON]->(t)
+                WITH t, 
+                    collect(DISTINCT past.id) as dependencies,
+                    collect(DISTINCT future.id) as blocked_tasks
                 RETURN t.id as id,
-                       t.description as description,
-                       t.date as date,
-                       t.time as time,
-                       t.priority as priority,
-                       t.status as status,
-                       t.started_at as started_at,
-                       t.ended_at as ended_at,
-                       dependencies
+                    t.description as description,
+                    t.date as date,
+                    t.time as time,
+                    t.priority as priority,
+                    t.status as status,
+                    t.started_at as started_at,
+                    t.ended_at as ended_at,
+                    dependencies,
+                    blocked_tasks  -- Tasks waiting on this one
                 ORDER BY t.time
             """, today=today)
             
             records = [dict(record) for record in result]
-            cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies"]
+            cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies", "blocked_tasks"]
             return pd.DataFrame(records, columns=cols) if records else pd.DataFrame(columns=cols)
     
     def get_relevant_tasks_by_task(self, task_id: str, max_depth: int = 2) -> pd.DataFrame:
@@ -215,7 +188,8 @@ class TaskOperations:
                 MATCH path = (t)-[:DEPENDS_ON*0..%d]-(related:Task)
                 WITH DISTINCT related
                 OPTIONAL MATCH (related)-[:DEPENDS_ON]->(d:Task)
-                WITH related, collect(d.id) as dependencies
+                OPTIONAL MATCH (future:Task)-[:DEPENDS_ON]->(related)
+                WITH related, collect(d.id) as dependencies, collect(future.id) as blocked_tasks
                 RETURN related.id as id,
                        related.description as description,
                        related.date as date,
@@ -224,12 +198,13 @@ class TaskOperations:
                        related.status as status,
                        related.started_at as started_at,
                        related.ended_at as ended_at,
-                       dependencies
+                       dependencies,
+                       blocked_tasks  -- Tasks waiting on this one
                 ORDER BY related.date, related.time
             """ % max_depth, task_id=task_id)
             
             records = [dict(record) for record in result]
-            cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies"]
+            cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies", "blocked_tasks"]
             return pd.DataFrame(records, columns=cols) if records else pd.DataFrame(columns=cols)
     
     def get_relevant_tasks_by_query(self, query_embedding: List[float], top_k: int = 5) -> pd.DataFrame:
@@ -251,29 +226,30 @@ class TaskOperations:
                     CALL db.index.vector.queryNodes('task_embedding_idx', $top_k, $query_embedding)
                     YIELD node, score
                     OPTIONAL MATCH (node)-[:DEPENDS_ON]->(d:Task)
-                    WITH node, score, collect(d.id) as dependencies
+                    OPTIONAL MATCH (future:Task)-[:DEPENDS_ON]->(node)
+                    WITH node, score, collect(DISTINCT d.id) as dependencies, collect(DISTINCT future.id) as blocked_tasks
                     RETURN node.id as id,
-                           node.description as description,
-                           node.date as date,
-                           node.time as time,
-                           node.priority as priority,
-                           node.status as status,
-                           node.started_at as started_at,
-                           node.ended_at as ended_at,
-                           dependencies,
-                           score
+                        node.description as description,
+                        node.date as date,
+                        node.time as time,
+                        node.priority as priority,
+                        node.status as status,
+                        node.started_at as started_at,
+                        node.ended_at as ended_at,
+                        dependencies,
+                        blocked_tasks,
+                        score
                     ORDER BY score DESC
                 """, query_embedding=query_embedding, top_k=top_k)
                 
                 records = [dict(record) for record in result]
-                cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies", "score"]
+                cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies", "blocked_tasks", "score"]
                 return pd.DataFrame(records, columns=cols) if records else pd.DataFrame(columns=cols)
             
             except Exception as e:
                 print(f"Vector search failed: {e}")
                 print("Falling back to text-based search...")
-                # Fallback: return empty or implement text-based search
-                cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies", "score"]
+                cols = ["id", "description", "date", "time", "priority", "status", "started_at", "ended_at", "dependencies", "blocked_tasks", "score"]
                 return pd.DataFrame(columns=cols)
     
     def show_task_path(self, start_task_id: str, end_task_id: Optional[str] = None) -> List[Dict]:
@@ -317,7 +293,6 @@ class TaskOperations:
                 return [record["path"] for record in result]
     
     # ── UPDATE ────────────────────────────────────────────────────────────────
-    
     def update_task_status(self, task_id: str, new_status: str) -> bool:
         """Update the status of a task."""
         with self.db.driver.session() as session:
@@ -375,6 +350,17 @@ class TaskOperations:
                 RETURN count(t) as deleted_count
             """, task_ids=task_ids)
             
+            record = result.single()
+            return record["deleted_count"] if record else 0
+    
+    def delete_all_tasks(self) -> int:
+        """Delete all tasks from the database."""
+        with self.db.driver.session() as session:
+            result = session.run("""
+                MATCH (t:Task)
+                DETACH DELETE t
+                RETURN count(t) as deleted_count
+            """)
             record = result.single()
             return record["deleted_count"] if record else 0
     

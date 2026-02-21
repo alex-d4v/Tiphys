@@ -64,9 +64,14 @@ class Neo4jManager:
         
         Schema:
         - Node: Task
-          - Properties: id (UUID), description, date, time, priority, status, 
-                       started_at, ended_at, embedding (vector)
+          - Properties: id (UUID), description, date, time, priority, status, started_at, ended_at, embedding (vector)
           - Relationships: DEPENDS_ON (Task -> Task)
+            Indexes/Constraints:
+            - Unique constraint on Task.id
+            - Index on Task.status for filtering
+            - Index on Task.date for temporal queries
+            - Index on Task.time for temporal queries
+            - Vector index on Task.embedding for similarity search (if supported)
         """
         with self.driver.session() as session:
             # Create unique constraint on Task.id (automatically creates index)
@@ -87,6 +92,12 @@ class Neo4jManager:
                 FOR (t:Task) ON (t.date)
             """)
             
+            # Create index on time for temporal queries
+            session.run("""
+                CREATE INDEX task_time_idx IF NOT EXISTS
+                FOR (t:Task) ON (t.time)
+            """)
+
             # Create vector index for embeddings (for similarity search)
             # Note: Requires Neo4j 5.11+ with vector support
             try:
@@ -98,10 +109,10 @@ class Neo4jManager:
                         `vector.similarity_function`: 'cosine'
                     }}
                 """)
-                print("✓ Vector index created (Neo4j 5.11+ with vector support)")
+                print("Vector index created (Neo4j 5.11+ with vector support)")
             except Exception as e:
-                print(f"⚠ Vector index creation skipped: {e}")
-                print("  (This is fine if you're using Neo4j < 5.11 or without vector plugin)")
+                print(f"Vector index creation skipped: {e}")
+                print("(This is fine if you're using Neo4j < 5.11 or without vector plugin)")
             
             # Warm up properties to define them in the schema and avoid notifications
             try:
@@ -123,10 +134,10 @@ class Neo4jManager:
                     DETACH DELETE t
                 """)
             except Exception as e:
-                print(f"⚠ Warmup failed: {e}")
+                print(f"Warmup failed: {e}")
                 pass
             
-            print("✓ Schema initialized successfully")
+            print("Schema initialized successfully")
     
     def clear_database(self, confirm: bool = False):
         """

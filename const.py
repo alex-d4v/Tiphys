@@ -1,1 +1,1 @@
-STATUS_OPTIONS = ["pending", "on work", "over deadline", "done"]
+STATUS_OPTIONS = ["pending", "on work" , "partially done" , "done", "over deadline", "blocked"]
